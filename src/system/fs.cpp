@@ -88,7 +88,7 @@ static char *read_symlink_target(const char *path)
             return NULL;
         }
         capacity *= 2;
-        target = (char*)xrealloc(target, capacity + 1);
+        target = (char *)xrealloc(target, capacity + 1);
     }
 }
 

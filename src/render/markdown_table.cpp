@@ -298,6 +298,13 @@ static void finalize_table(struct md_table *t, const struct md_table_context *ct
 
     /* Gather line spans (newline-terminated; the table buffer always ends \n). */
     const char *ls[TABLE_MAX_ROWS];
+    int colw[TABLE_MAX_COLS];
+    int total = 0;
+    int ncols = 0;
+    int ndelim = 0;
+    int nbody = 0;
+    int nrows = 0;
+    struct cell *grid = NULL;
     size_t ll[TABLE_MAX_ROWS];
     int lc = 0;
     size_t s0 = 0;
@@ -318,7 +325,7 @@ static void finalize_table(struct md_table *t, const struct md_table_context *ct
 
     const char *hcp[TABLE_MAX_COLS];
     size_t hcl[TABLE_MAX_COLS];
-    int ncols = lc >= 1 ? split_row(ls[0], ll[0], hcp, hcl, TABLE_MAX_COLS) : 0;
+    ncols = lc >= 1 ? split_row(ls[0], ll[0], hcp, hcl, TABLE_MAX_COLS) : 0;
     if (ncols > TABLE_MAX_COLS)
         ncols = TABLE_MAX_COLS;
     if (lc < 2 || ncols < 1) {
@@ -343,7 +350,7 @@ static void finalize_table(struct md_table *t, const struct md_table_context *ct
      * `:-:` center; default left). */
     const char *dcp[TABLE_MAX_COLS];
     size_t dcl[TABLE_MAX_COLS];
-    int ndelim = split_row(ls[1], ll[1], dcp, dcl, TABLE_MAX_COLS);
+    ndelim = split_row(ls[1], ll[1], dcp, dcl, TABLE_MAX_COLS);
     char align[TABLE_MAX_COLS];
     for (int j = 0; j < ncols; j++) {
         char a = 'L';
@@ -355,9 +362,9 @@ static void finalize_table(struct md_table *t, const struct md_table_context *ct
         align[j] = a;
     }
 
-    int nbody = lc - 2;
-    int nrows = 1 + nbody; /* header + body */
-    struct cell *grid = (struct cell *)xcalloc((size_t)nrows * ncols, sizeof(*grid));
+    nbody = lc - 2;
+    nrows = 1 + nbody; /* header + body */
+    grid = (struct cell *)xcalloc((size_t)nrows * ncols, sizeof(*grid));
 
     /* Header cells inherit the grid's outer bold. */
     for (int j = 0; j < ncols; j++)
@@ -376,8 +383,6 @@ static void finalize_table(struct md_table *t, const struct md_table_context *ct
         }
     }
 
-    int colw[TABLE_MAX_COLS];
-    int total = 0;
     for (int j = 0; j < ncols; j++) {
         int w = 1; /* keep an empty column visible */
         for (int r = 0; r < nrows; r++) {

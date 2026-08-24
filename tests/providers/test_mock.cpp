@@ -97,7 +97,7 @@ static struct provider *new_scripted_provider(const char *path)
 static int capture_stream(struct provider *provider, const struct context *context,
                           struct stream_capture *capture)
 {
-    static const struct context empty;
+    static const struct context empty = {};
     return provider->stream(provider, context ? context : &empty, NULL, capture_cb, capture, NULL,
                             NULL);
 }
@@ -200,7 +200,7 @@ static void test_scripted_cancel(void)
     struct provider *provider = new_scripted_provider(path);
     struct stream_capture capture;
 
-    static const struct context empty;
+    static const struct context empty = {};
     capture_init(&capture);
     EXPECT(provider->stream(provider, &empty, NULL, capture_cb, &capture, cancel_tick, NULL) != 0);
     EXPECT(capture.done_event_count == 0);

@@ -77,7 +77,8 @@ static void emit_done(stream_cb cb, void *user, struct stream_usage usage)
 static void emit_error(stream_cb cb, void *user, const char *message,
                        const struct stream_usage *usage)
 {
-    struct stream_event ev = {.kind = EV_ERROR, .u = {.error = {.message = message, .usage = usage}}};
+    struct stream_event ev = {.kind = EV_ERROR,
+                              .u = {.error = {.message = message, .usage = usage}}};
     cb(&ev, user);
 }
 
@@ -524,7 +525,7 @@ static void count_compaction(void *user)
 
 static void session_enable_tools(struct agent_session *session)
 {
-    session->tools = (tool_def*)xcalloc(1, sizeof(*session->tools));
+    session->tools = (tool_def *)xcalloc(1, sizeof(*session->tools));
     session->tools[0].name = "read";
     session->n_tools = 1;
 }

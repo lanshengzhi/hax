@@ -495,7 +495,7 @@ static int handle_resize(struct input *in)
         int prompt_width = input_core_prompt_width(in->prompt);
         int capacity = in->window_top + in->painted_rows + 1;
         struct row_widths widths = {
-            .values = (int*)xcalloc((size_t)capacity, sizeof(int)),
+            .values = (int *)xcalloc((size_t)capacity, sizeof(int)),
             .capacity = capacity,
             .current = prompt_width,
         };
@@ -662,6 +662,14 @@ static const char *resolve_editor(void)
 
 static void open_editor(struct input *in)
 {
+    size_t n = 0;
+    char *content = NULL;
+    char *cmd = NULL;
+    int status = -1;
+    int aborted = 0;
+    char path[] = "/tmp/hax-edit-XXXXXX";
+    int fd = -1;
+
     /* Alternate-screen editors restore the cursor to this cleared position. */
     erase_edit_area(in);
     disable_raw_mode(in);
@@ -673,8 +681,7 @@ static void open_editor(struct input *in)
         goto reenter;
     }
 
-    char path[] = "/tmp/hax-edit-XXXXXX";
-    int fd = mkstemp(path);
+    fd = mkstemp(path);
     if (fd < 0)
         goto reenter;
     if (in->len > 0 && write_all(fd, in->buf, in->len) < 0) {
@@ -688,14 +695,13 @@ static void open_editor(struct input *in)
      * probed fallbacks are bare command names. */
     /* The buffer handed over is whatever the user typed or pasted, and comes back the same way, so
      * the editor has to agree with hax about the encoding or it will rewrite the text. */
-    char *cmd = spawn_shell_cmd_force_utf8(xasprintf("%s '%s'", editor, path));
-    int status = spawn_shell_wait(cmd);
+    cmd = spawn_shell_cmd_force_utf8(xasprintf("%s '%s'", editor, path));
+    status = spawn_shell_wait(cmd);
     free(cmd);
 
-    int aborted = status < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0;
+    aborted = status < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0;
 
-    size_t n = 0;
-    char *content = aborted ? NULL : slurp_file(path, &n);
+    content = aborted ? NULL : slurp_file(path, &n);
     unlink(path);
     if (content) {
         /* The edit buffer is NUL-terminated; preserve embedded NUL positions as spaces. */
@@ -1233,17 +1239,17 @@ int input_bind_modal_key(struct input *in, unsigned char key, void (*fn)(void *u
 {
     if (key >= 0x20)
         return -1;
-    struct input_modal_key *slot = NULL;
+    decltype(&in->modal_keys[0]) slot = NULL;
     for (size_t i = 0; i < INPUT_MODAL_KEYS_MAX; i++) {
         if (in->modal_keys[i].fn && in->modal_keys[i].key == key) {
-            slot = (input_bind_modal_key(input*, unsigned char, void (*)(void*), void*)::input_modal_key*)&in->modal_keys[i];
+            slot = &in->modal_keys[i];
             break;
         }
     }
     if (!slot && fn) {
         for (size_t i = 0; i < INPUT_MODAL_KEYS_MAX; i++) {
             if (!in->modal_keys[i].fn) {
-                slot = (input_bind_modal_key(input*, unsigned char, void (*)(void*), void*)::input_modal_key*)&in->modal_keys[i];
+                slot = &in->modal_keys[i];
                 break;
             }
         }

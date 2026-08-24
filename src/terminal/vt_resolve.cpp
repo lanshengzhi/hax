@@ -258,14 +258,15 @@ static void row_insert(struct terminal_row *row, size_t index, enum segment_kind
 {
     if (row->count == row->capacity) {
         row->capacity = row->capacity ? row->capacity * 2 : 16;
-        row->segments = (row_segment*)xrealloc(row->segments, row->capacity * sizeof(*row->segments));
+        row->segments =
+            (row_segment *)xrealloc(row->segments, row->capacity * sizeof(*row->segments));
     }
     if (index < row->count) {
         memmove(&row->segments[index + 1], &row->segments[index],
                 (row->count - index) * sizeof(*row->segments));
     }
     row->segments[index].kind = kind;
-    row->segments[index].bytes = (char*)xmalloc(byte_len);
+    row->segments[index].bytes = (char *)xmalloc(byte_len);
     memcpy(row->segments[index].bytes, bytes, byte_len);
     row->segments[index].byte_len = byte_len;
     row->segments[index].cell_width = cell_width;
@@ -275,7 +276,7 @@ static void row_insert(struct terminal_row *row, size_t index, enum segment_kind
 static void segment_append(struct row_segment *segment, const char *bytes, size_t byte_len,
                            size_t cell_width)
 {
-    segment->bytes = (char*)xrealloc(segment->bytes, segment->byte_len + byte_len);
+    segment->bytes = (char *)xrealloc(segment->bytes, segment->byte_len + byte_len);
     memcpy(segment->bytes + segment->byte_len, bytes, byte_len);
     segment->byte_len += byte_len;
     segment->cell_width += cell_width;

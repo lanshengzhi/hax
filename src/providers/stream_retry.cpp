@@ -55,13 +55,15 @@ int stream_retry_run(const struct stream_retry *request, stream_cb callback, voi
                                                     : retry_delay_ms(&policy, attempt);
         struct stream_event retry = {
             .kind = EV_RETRY,
-            .u = {.retry = {
-                    .attempt = attempt + 1,
-                    .max_attempts = policy.max_attempts,
-                    .delay_ms = delay_ms,
-                    .http_status = (int)response.status,
-                    .usage = request->parser_usage ? request->parser_usage(request->ctx) : NULL,
-                }},
+            .u = {.retry =
+                      {
+                          .attempt = attempt + 1,
+                          .max_attempts = policy.max_attempts,
+                          .delay_ms = delay_ms,
+                          .http_status = (int)response.status,
+                          .usage =
+                              request->parser_usage ? request->parser_usage(request->ctx) : NULL,
+                      }},
         };
         callback(&retry, callback_user);
 
@@ -101,8 +103,8 @@ int stream_retry_run(const struct stream_retry *request, stream_cb callback, voi
             struct stream_event error = {
                 .kind = EV_ERROR,
                 .u = {.error = {.message = message,
-                            .http_status = (int)response.status,
-                            .usage = stranded_usage}},
+                                .http_status = (int)response.status,
+                                .usage = stranded_usage}},
             };
             callback(&error, callback_user);
             free(message);

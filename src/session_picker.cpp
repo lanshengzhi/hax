@@ -114,7 +114,8 @@ char *session_picker_run(const char *cwd, const char *exclude_path, int *picker_
     size_t entry_count;
     session_list(cwd, &entries, &entry_count);
 
-    size_t *entry_indexes = entry_count ? (size_t *)xmalloc(entry_count * sizeof(*entry_indexes)) : NULL;
+    size_t *entry_indexes =
+        entry_count ? (size_t *)xmalloc(entry_count * sizeof(*entry_indexes)) : NULL;
     size_t visible_count = 0;
     for (size_t i = 0; i < entry_count; i++) {
         if (exclude_path && entries[i].path && strcmp(entries[i].path, exclude_path) == 0)

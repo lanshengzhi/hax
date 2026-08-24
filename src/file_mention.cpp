@@ -79,7 +79,7 @@ static struct picker_query parse_picker_query(const char *text)
     }
 
     size_t root_len = (size_t)(slash - text + 1);
-    query.root = (char*)xmalloc(root_len + 1);
+    query.root = (char *)xmalloc(root_len + 1);
     memcpy(query.root, text, root_len);
     query.root[root_len] = '\0';
     query.filter = xstrdup(slash + 1);

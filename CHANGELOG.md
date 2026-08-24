@@ -7,6 +7,12 @@ notes (see [docs/releasing.md](docs/releasing.md)).
 
 ## [Unreleased]
 
+### Changed
+
+- Begin the incremental C++20 migration: the Meson build, production sources, and tests now
+  compile with the C++20 toolchain while preserving the existing provider and tool interfaces.
+
+
 ## [0.4.0] - 2026-08-22
 
 ### Added

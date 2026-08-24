@@ -551,13 +551,13 @@ static size_t resolve_targets(const char *const *ids, size_t n_ids, struct task 
         for (struct task *t = tasks; t; t = t->next)
             if (!t->collected)
                 count++;
-        targets = (task**)xmalloc(count * sizeof(*targets));
+        targets = (task **)xmalloc(count * sizeof(*targets));
         count = 0;
         for (struct task *t = tasks; t; t = t->next)
             if (!t->collected)
                 targets[count++] = t;
     } else {
-        targets = (task**)xmalloc(n_ids * sizeof(*targets));
+        targets = (task **)xmalloc(n_ids * sizeof(*targets));
         for (size_t i = 0; i < n_ids; i++) {
             struct task *t = ids[i] ? task_find(ids[i]) : NULL;
             if (!t)

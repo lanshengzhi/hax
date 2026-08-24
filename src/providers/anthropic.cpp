@@ -167,7 +167,7 @@ static void append_models(json_t *data, struct model_info **models, size_t *n_mo
 
         if (*n_models == *capacity) {
             *capacity = *capacity ? *capacity * 2 : (n_entries > 8 ? n_entries : 8);
-            *models = (model_info*)xrealloc(*models, *capacity * sizeof(**models));
+            *models = (model_info *)xrealloc(*models, *capacity * sizeof(**models));
         }
         model_info_init(&(*models)[*n_models]);
         (*models)[*n_models].id = xstrdup(model_id);
@@ -265,10 +265,10 @@ struct provider *anthropic_provider_new(const char *id)
         .api_key_env = "ANTHROPIC_API_KEY",
         .config_prefix = "providers.anthropic",
         .pin_base_url = 1,
+        .catalog_id = "anthropic",
         .default_thinking_mode = ANTHROPIC_THINKING_ADAPTIVE,
         .allow_empty_signature = 0,
         .send_cache_control_default = 1,
-        .catalog_id = "anthropic",
     };
     struct provider *provider = anthropic_provider_new_preset(&preset);
     if (provider)

@@ -548,7 +548,7 @@ static void resolve_wire_rules(struct http_provider *provider, const char *prefi
         hax_warn("%s must be a JSON object of pattern/dialect members — ignoring it", key);
     if (json_is_object(node)) {
         provider->wire_rules =
-            (wire_rule*)xcalloc(json_object_size((json_t *)node), sizeof(*provider->wire_rules));
+            (wire_rule *)xcalloc(json_object_size((json_t *)node), sizeof(*provider->wire_rules));
         const char *pattern;
         json_t *value;
         json_object_foreach((json_t *)node, pattern, value)

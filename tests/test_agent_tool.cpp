@@ -121,7 +121,7 @@ static struct item_image *make_image(size_t base64_len)
 {
     struct item_image *image = (struct item_image *)xcalloc(1, sizeof(*image));
     image->mime = xstrdup("image/png");
-    image->data_b64 = (char*)xmalloc(base64_len + 1);
+    image->data_b64 = (char *)xmalloc(base64_len + 1);
     memset(image->data_b64, 'A', base64_len);
     image->data_b64[base64_len] = '\0';
     return image;

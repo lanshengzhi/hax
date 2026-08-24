@@ -209,7 +209,8 @@ static void summary_request_append(struct summary_request *request, struct item 
 {
     if (request->count == request->capacity) {
         request->capacity = request->capacity ? request->capacity * 2 : 16;
-        request->items = (item*)xrealloc(request->items, request->capacity * sizeof(*request->items));
+        request->items =
+            (struct item *)xrealloc(request->items, request->capacity * sizeof(*request->items));
     }
     request->items[request->count++] = item;
 }
@@ -223,7 +224,7 @@ static void summary_request_init(struct summary_request *request,
         model_meta_image_input(params->provider, params->session->model);
     request->borrowed_count = request->base_context.n_items;
     request->capacity = request->borrowed_count + 1;
-    request->items = (item*)xmalloc(request->capacity * sizeof(*request->items));
+    request->items = (struct item *)xmalloc(request->capacity * sizeof(*request->items));
     if (request->borrowed_count > 0)
         memcpy(request->items, request->base_context.items,
                request->borrowed_count * sizeof(*request->items));

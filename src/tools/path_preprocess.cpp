@@ -18,13 +18,14 @@ char *tool_relativize_path_args(const char *args_json)
         return NULL;
 
     char *rewritten_args = NULL;
+    char *relative_path = NULL;
+    char *expanded_path = NULL;
     const char *path = json_string_value(json_object_get(root, "path"));
     if (!path)
         goto out;
 
-    char *expanded_path = path_expand_home(path);
+    expanded_path = path_expand_home(path);
     char cwd[PATH_MAX];
-    char *relative_path = NULL;
     if (getcwd(cwd, sizeof(cwd)))
         relative_path = path_relativize(expanded_path, cwd);
     free(expanded_path);

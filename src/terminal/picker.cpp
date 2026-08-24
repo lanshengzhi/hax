@@ -665,7 +665,7 @@ long picker_run(const struct picker_opts *options)
     struct picker picker;
     memset(&picker, 0, sizeof picker);
     picker.core.options = options;
-    picker.core.matches = (size_t*)xmalloc(options->item_count * sizeof(*picker.core.matches));
+    picker.core.matches = (size_t *)xmalloc(options->item_count * sizeof(*picker.core.matches));
     buf_init(&picker.core.query);
 
     int terminal_cols, terminal_rows;

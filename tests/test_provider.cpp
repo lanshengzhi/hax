@@ -10,7 +10,7 @@ static struct item make_image_item(size_t base64_bytes)
 {
     struct item_image *image = (struct item_image *)xcalloc(1, sizeof(*image));
     image->mime = xstrdup("image/png");
-    image->data_b64 = (char*)xmalloc(base64_bytes + 1);
+    image->data_b64 = (char *)xmalloc(base64_bytes + 1);
     memset(image->data_b64, 'A', base64_bytes);
     image->data_b64[base64_bytes] = '\0';
     return (struct item){.kind = ITEM_TOOL_RESULT, .images = image, .n_images = 1};
@@ -64,7 +64,7 @@ static void test_item_free(void)
     item.reasoning_text = xstrdup("reasoning");
     item.provider = xstrdup("provider");
     item.model = xstrdup("model");
-    item.usage = (turn_usage*)xcalloc(1, sizeof(*item.usage));
+    item.usage = (turn_usage *)xcalloc(1, sizeof(*item.usage));
 
     item_free(&item);
     item_free(NULL);

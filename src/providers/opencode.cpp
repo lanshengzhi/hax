@@ -116,6 +116,7 @@ int opencode_go_query_usage(struct provider *provider)
     json_t *root = NULL;
     long status = 0;
     int result = -1;
+    size_t n_windows = 0;
 
     struct busy *busy = busy_begin("fetching usage...");
     int request_result = http_get(url, (const char *const *)headers, OPENCODE_USAGE_TIMEOUT_S, 0,
@@ -141,7 +142,7 @@ int opencode_go_query_usage(struct provider *provider)
     }
 
     struct usage_window windows[OPENCODE_USAGE_WINDOWS_MAX];
-    size_t n_windows = opencode_usage_parse(root, windows, OPENCODE_USAGE_WINDOWS_MAX);
+    n_windows = opencode_usage_parse(root, windows, OPENCODE_USAGE_WINDOWS_MAX);
     if (n_windows == 0) {
         ui_error("unrecognized usage response shape (no usage windows)");
         goto out;

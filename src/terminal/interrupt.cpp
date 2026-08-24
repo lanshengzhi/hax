@@ -6,13 +6,13 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
-#include "atomics.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "atomics.h"
 #include "terminal/ansi.h"
 
 #define ESCAPE_TIMEOUT_MS       50
@@ -299,13 +299,14 @@ void interrupt_install_fatal_signal_handlers(void)
 static int create_wake_pipe(void)
 {
     int fds[2];
+    int flags = 0;
     /* pipe2 is unavailable on macOS; set CLOEXEC explicitly to keep watcher fds internal. */
     if (pipe(fds) < 0)
         return -1;
     if (fcntl(fds[0], F_SETFD, FD_CLOEXEC) < 0 || fcntl(fds[1], F_SETFD, FD_CLOEXEC) < 0)
         goto fail;
 
-    int flags = fcntl(fds[0], F_GETFL, 0);
+    flags = fcntl(fds[0], F_GETFL, 0);
     if (flags < 0 || fcntl(fds[0], F_SETFL, flags | O_NONBLOCK) < 0)
         goto fail;
 

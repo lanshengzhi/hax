@@ -72,6 +72,18 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
     char *path = NULL;
     char *original = NULL;
     char *updated = NULL;
+    char *error = NULL;
+    const char *old_string = NULL;
+    size_t old_string_len = 0;
+    const char *new_string = NULL;
+    size_t new_string_len = 0;
+    int replace_all = 0;
+    size_t original_len = 0;
+    int truncated = 0;
+    original_len = 0;
+    truncated = 0;
+    size_t match_count = 0;
+    size_t updated_len = 0;
 
     const char *raw_path = json_string_value(json_object_get(root, "path"));
     json_t *old_string_json = json_object_get(root, "old_string");
@@ -91,11 +103,11 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
         goto out;
     }
 
-    const char *old_string = json_string_value(old_string_json);
-    size_t old_string_len = json_string_length(old_string_json);
-    const char *new_string = json_string_value(new_string_json);
-    size_t new_string_len = json_string_length(new_string_json);
-    int replace_all = json_is_true(replace_all_json);
+    old_string = json_string_value(old_string_json);
+    old_string_len = json_string_length(old_string_json);
+    new_string = json_string_value(new_string_json);
+    new_string_len = json_string_length(new_string_json);
+    replace_all = json_is_true(replace_all_json);
 
     if (old_string_len == 0) {
         result = xstrdup("'old_string' must be non-empty");
@@ -115,8 +127,8 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
         goto out;
     }
 
-    size_t original_len = 0;
-    int truncated = 0;
+    original_len = 0;
+    truncated = 0;
     original = slurp_file_capped(path, EDIT_READ_CAP, &original_len, &truncated);
     if (!original) {
         result = xasprintf("error reading %s: %s", path, strerror(errno));
@@ -128,7 +140,7 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
         goto out;
     }
 
-    size_t match_count = count_occurrences(original, original_len, old_string, old_string_len);
+    match_count = count_occurrences(original, original_len, old_string, old_string_len);
     if (match_count == 0) {
         result = xstrdup("'old_string' not found in file");
         goto out;
@@ -140,11 +152,10 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
         goto out;
     }
 
-    size_t updated_len = 0;
+    updated_len = 0;
     updated = replace_occurrences(original, original_len, old_string, old_string_len, new_string,
                                   new_string_len, &updated_len);
 
-    char *error = NULL;
     result = fs_write_with_diff(path, updated, updated_len, &error, NULL);
     if (error) {
         free(result);
@@ -167,12 +178,12 @@ static const char EDIT_DESCRIPTION[] =
     "change.";
 
 static const struct tool_param EDIT_PARAMS[] = {
-    {.name = "path", .type = "string", .required = 1, .description = "Path to the file."},
+    {.name = "path", .type = "string", .description = "Path to the file.", .required = 1},
     {.name = "old_string",
      .type = "string",
-     .required = 1,
-     .description = "Exact text to find. Must be unique unless replace_all is set."},
-    {.name = "new_string", .type = "string", .required = 1, .description = "Replacement text."},
+     .description = "Exact text to find. Must be unique unless replace_all is set.",
+     .required = 1},
+    {.name = "new_string", .type = "string", .description = "Replacement text.", .required = 1},
     {.name = "replace_all",
      .type = "boolean",
      .description = "Replace every occurrence instead of requiring uniqueness."},

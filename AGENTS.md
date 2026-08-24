@@ -44,8 +44,8 @@ Tests are plain C binaries using `tests/harness.h` (`EXPECT`, `EXPECT_STR_EQ`, `
 `T_REPORT`). Create scratch directories with the harness's `t_tempdir()`, which removes them
 at process exit; raw `mkdtemp` in tests fails `make lint`.
 To add a test, append its source to `test_sources` in `tests/meson.build`, grouped to mirror
-the production `sources` list. Test names are path-derived: `tools/test_read.c` becomes
-`tools/read`, and `test_util.c` becomes `util`.
+the production `sources` list. Test names are path-derived: `tools/test_read.cpp` becomes
+`tools/read`, and `test_util.cpp` becomes `util`.
 
 End-to-end scenarios follow the same conventions in Python: standalone scripts under
 `tests/e2e/`, registered in `e2e_scenarios` in `tests/meson.build`. They run the built binary
@@ -102,8 +102,8 @@ Core boundaries:
   `struct stream_event`; agent behavior must not depend on native response shapes.
 - `src/turn.{c,h}` is a pure state machine from borrowed stream events to owned conversation items.
   Keep I/O and presentation out of it.
-- Behavior shared by the interactive and one-shot frontends belongs below `src/agent.c` and
-  `src/oneshot.c`, primarily in `agent_core` and `agent_loop`. Frontends supply presentation and
+- Behavior shared by the interactive and one-shot frontends belongs below `src/agent.cpp` and
+  `src/oneshot.cpp`, primarily in `agent_core` and `agent_loop`. Frontends supply presentation and
   cancellation through hooks rather than duplicating the continuation loop.
 - Declare user-facing settings in the config registry and consume them by canonical key. Direct
   environment reads are for startup/bootstrap decisions, conventional process environment, or
@@ -130,7 +130,7 @@ Extension workflows:
 - A compiled-in provider needs its source in `meson.build`, a factory declaration in
   `providers/registry.h`, and a `BUILTINS[]` entry at the intended autoselect priority.
 - A compiled-in tool needs its source in `meson.build`, an exported `const struct tool` declaration
-  in `tool.h`, and an entry in `agent_core.c`'s `TOOLS[]`.
+  in `tool.h`, and an entry in `agent_core.cpp`'s `TOOLS[]`.
 - Keep protocol translation and terminal-independent state machines pure and separately testable;
   do not require HTTP or a TTY to test parsing and state transitions.
 

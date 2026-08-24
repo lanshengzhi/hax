@@ -97,10 +97,11 @@ static size_t append_assistant_message(json_t *messages, const struct item *item
     /* The typed sequence is the richer encoding of the same reasoning: sending the plain member
      * alongside it would duplicate the content. */
     int include_reasoning = reasoning_field && reasoning.len > 0 && !details;
+    json_t *message = NULL;
     if (text.len == 0 && !tool_calls && !include_reasoning && !details)
         goto out;
 
-    json_t *message = json_object();
+    message = json_object();
     json_object_set_new(message, "role", json_string("assistant"));
     json_object_set_new(message, "content", text.len > 0 ? json_string(text.data) : json_null());
     if (tool_calls)

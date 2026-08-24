@@ -26,7 +26,7 @@ static pthread_mutex_t report_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct model_meta *get_or_create_meta(struct provider *provider)
 {
     if (!provider->meta)
-        provider->meta = (model_meta*)xcalloc(1, sizeof(*provider->meta));
+        provider->meta = (model_meta *)xcalloc(1, sizeof(*provider->meta));
     return provider->meta;
 }
 

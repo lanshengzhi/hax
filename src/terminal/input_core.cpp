@@ -14,7 +14,7 @@
 struct input *input_new(void)
 {
     struct input *in = (struct input *)xcalloc(1, sizeof(*in));
-    in->buf = (char*)xmalloc(64);
+    in->buf = (char *)xmalloc(64);
     in->cap = 64;
     in->buf[0] = '\0';
     return in;
@@ -72,7 +72,7 @@ static void ensure_buffer_capacity(struct input *in, size_t required)
     size_t capacity = in->cap ? in->cap : 64;
     while (capacity < required)
         capacity *= 2;
-    in->buf = (char*)xrealloc(in->buf, capacity);
+    in->buf = (char *)xrealloc(in->buf, capacity);
     in->cap = capacity;
 }
 
@@ -283,7 +283,7 @@ int input_core_history_add(struct input *in, const char *line)
     }
     if (in->hist_n + 1 > in->hist_cap) {
         in->hist_cap = in->hist_cap ? in->hist_cap * 2 : 16;
-        in->hist = (char**)xrealloc(in->hist, in->hist_cap * sizeof(char *));
+        in->hist = (char **)xrealloc(in->hist, in->hist_cap * sizeof(char *));
     }
     in->hist[in->hist_n++] = xstrdup(line);
     if (in->hist_n > INPUT_CORE_HISTORY_MAX) {

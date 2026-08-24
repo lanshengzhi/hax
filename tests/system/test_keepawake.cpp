@@ -56,6 +56,10 @@ static void test_sleep_not_resolved_via_path(void)
     char *dir = t_tempdir();
     char *fake_sleep = xasprintf("%s/sleep", dir);
     char *marker = xasprintf("%s/ran", dir);
+    int fake_ran = 0;
+    const char *current_path = NULL;
+    char *saved_path = NULL;
+    char *test_path = NULL;
 
     FILE *file = fopen(fake_sleep, "w");
     EXPECT(file != NULL);
@@ -65,14 +69,13 @@ static void test_sleep_not_resolved_via_path(void)
     fclose(file);
     chmod(fake_sleep, 0755);
 
-    const char *current_path = getenv("PATH");
-    char *saved_path = current_path ? xstrdup(current_path) : NULL;
-    char *test_path = xasprintf("%s:%s", dir, saved_path ? saved_path : "");
+    current_path = getenv("PATH");
+    saved_path = current_path ? xstrdup(current_path) : NULL;
+    test_path = xasprintf("%s:%s", dir, saved_path ? saved_path : "");
     setenv("PATH", test_path, 1);
     free(test_path);
 
     keepawake_acquire();
-    int fake_ran = 0;
     for (int i = 0; i < 50 && !fake_ran; i++) {
         fake_ran = access(marker, F_OK) == 0;
         if (!fake_ran) {

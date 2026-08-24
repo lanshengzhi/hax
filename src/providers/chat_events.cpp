@@ -90,7 +90,8 @@ static struct chat_tool_call *get_tool_call(struct chat_events *parser, int inde
 
     if (parser->n_tool_calls == parser->tool_call_capacity) {
         size_t capacity = parser->tool_call_capacity ? parser->tool_call_capacity * 2 : 4;
-        parser->tool_calls = (chat_tool_call*)xrealloc(parser->tool_calls, capacity * sizeof(*parser->tool_calls));
+        parser->tool_calls =
+            (chat_tool_call *)xrealloc(parser->tool_calls, capacity * sizeof(*parser->tool_calls));
         parser->tool_call_capacity = capacity;
     }
 
@@ -124,10 +125,11 @@ static void start_tool_call(struct chat_events *parser, struct chat_tool_call *c
     if (call->arguments_before_start.len > 0) {
         struct stream_event arguments = {
             .kind = EV_TOOL_CALL_DELTA,
-            .u = {.tool_call_delta = {
-                    .id = call->id,
-                    .args_delta = call->arguments_before_start.data,
-                }},
+            .u = {.tool_call_delta =
+                      {
+                          .id = call->id,
+                          .args_delta = call->arguments_before_start.data,
+                      }},
         };
         emit_event(parser, &arguments);
         buf_reset(&call->arguments_before_start);
@@ -360,12 +362,13 @@ static void emit_terminal_event(struct chat_events *parser)
     if (parser->finish_error) {
         struct stream_event event = {
             .kind = EV_ERROR,
-            .u = {.error = {
-                    .message = parser->finish_error,
-                    .http_status = 0,
-                    .usage = &parser->usage,
-                    .response = &response,
-                }},
+            .u = {.error =
+                      {
+                          .message = parser->finish_error,
+                          .http_status = 0,
+                          .usage = &parser->usage,
+                          .response = &response,
+                      }},
         };
         emit_event(parser, &event);
         return;
@@ -373,11 +376,12 @@ static void emit_terminal_event(struct chat_events *parser)
 
     struct stream_event event = {
         .kind = EV_DONE,
-        .u = {.done = {
-                .stop_reason = parser->finish_reason ? parser->finish_reason : "stop",
-                .usage = parser->usage,
-                .response = response,
-            }},
+        .u = {.done =
+                  {
+                      .stop_reason = parser->finish_reason ? parser->finish_reason : "stop",
+                      .usage = parser->usage,
+                      .response = response,
+                  }},
     };
     emit_event(parser, &event);
 }
@@ -425,12 +429,13 @@ static void handle_error(struct chat_events *parser, json_t *error)
     struct stream_response response = response_of(parser);
     struct stream_event event = {
         .kind = EV_ERROR,
-        .u = {.error = {
-                .message = message ? message : "provider error",
-                .http_status = 0,
-                .usage = &parser->usage,
-                .response = &response,
-            }},
+        .u = {.error =
+                  {
+                      .message = message ? message : "provider error",
+                      .http_status = 0,
+                      .usage = &parser->usage,
+                      .response = &response,
+                  }},
     };
     emit_event(parser, &event);
 }
@@ -507,12 +512,13 @@ void chat_events_finalize(struct chat_events *parser)
     struct stream_response response = response_of(parser);
     struct stream_event event = {
         .kind = EV_ERROR,
-        .u = {.error = {
-                .message = "stream ended before completion",
-                .http_status = 0,
-                .usage = &parser->usage,
-                .response = &response,
-            }},
+        .u = {.error =
+                  {
+                      .message = "stream ended before completion",
+                      .http_status = 0,
+                      .usage = &parser->usage,
+                      .response = &response,
+                  }},
     };
     emit_event(parser, &event);
 }

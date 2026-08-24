@@ -320,13 +320,13 @@ static void test_price_surcharge_style_writes(void)
         .cost_cache_read = -1,
         .cost_cache_write = 2.5, /* base: replacement (2.5 >= 2) */
         .cost_cache_write_1h = -1,
-        .n_tiers = 1,
         .tiers = {{.context_threshold = 200000,
                    .cost_input = 10, /* tier: surcharge (2.5 < 10) */
                    .cost_output = -1,
                    .cost_cache_read = -1,
                    .cost_cache_write = -1,
                    .cost_cache_write_1h = -1}},
+        .n_tiers = 1,
     };
     /* Below the tier: writes replace input, so 1000 written tokens of a
      * 1000-token prompt leave nothing uncached. */
@@ -364,7 +364,6 @@ static void test_price_tiers(void)
         .cost_output = 8,
         .cost_cache_read = 0.5,
         .cost_cache_write = -1,
-        .n_tiers = 2,
         .tiers = {{.context_threshold = 200000,
                    .cost_input = 4,
                    .cost_output = 16,
@@ -375,6 +374,7 @@ static void test_price_tiers(void)
                    .cost_output = -1, /* falls back to base output */
                    .cost_cache_read = -1,
                    .cost_cache_write = -1}},
+        .n_tiers = 2,
     };
     /* At or below the threshold: base rates. */
     EXPECT(catalog_price(&entry, 200000, 100000, 0, 0, 0, NULL) == 0.4 + 0.8);

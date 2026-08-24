@@ -21,9 +21,9 @@ struct provider *openai_provider_new(const char *id)
         .api_key_env = "OPENAI_API_KEY",
         .config_prefix = "providers.openai",
         .pin_base_url = 1,
-        .send_cache_key_default = 1,
-        .wire = &WIRE_OPENAI_RESPONSES,
         .catalog_id = "openai",
+        .wire = &WIRE_OPENAI_RESPONSES,
+        .send_cache_key_default = 1,
         .efforts = OPENAI_EFFORT_LADDER,
         .n_efforts = OPENAI_EFFORT_LADDER_N,
     };

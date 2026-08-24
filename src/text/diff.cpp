@@ -77,8 +77,8 @@ static void side_init(struct side *side, const char *data, size_t len)
 
     side->data = data;
     side->count = count;
-    side->off = (uint32_t*)xmalloc((count + 1) * sizeof(*side->off));
-    side->hash = (uint32_t*)xmalloc((count + 1) * sizeof(*side->hash));
+    side->off = (uint32_t *)xmalloc((count + 1) * sizeof(*side->off));
+    side->hash = (uint32_t *)xmalloc((count + 1) * sizeof(*side->hash));
 
     size_t at = 1;
     side->off[0] = 0;
@@ -133,7 +133,7 @@ static struct window find_window(const char *a, size_t a_len, const char *b, siz
     }
     w.lo = lo;
     w.base = 0;
-    for (const char *q = a; (q = (const char*)memchr(q, '\n', (size_t)(a + lo - q))) != NULL; q++)
+    for (const char *q = a; (q = (const char *)memchr(q, '\n', (size_t)(a + lo - q))) != NULL; q++)
         w.base++;
 
     size_t s = 0;
@@ -396,7 +396,7 @@ static struct change *collect_changes(size_t n, size_t m, const unsigned char *a
         if ((i < n && a_changed[i]) || (j < m && b_changed[j])) {
             if (count == cap) {
                 cap = cap ? cap * 2 : 8;
-                changes = (change*)xrealloc(changes, cap * sizeof(*changes));
+                changes = (change *)xrealloc(changes, cap * sizeof(*changes));
             }
             struct change *c = &changes[count++];
             c->a_start = i;
@@ -482,7 +482,8 @@ static void append_hunks(struct buf *out, const struct side *a, const struct sid
 static size_t region_line_count(const char *data, size_t len)
 {
     size_t count = 0;
-    for (const char *q = data; (q = (const char*)memchr(q, '\n', (size_t)(data + len - q))) != NULL; q++)
+    for (const char *q = data;
+         (q = (const char *)memchr(q, '\n', (size_t)(data + len - q))) != NULL; q++)
         count++;
     if (len > 0 && data[len - 1] != '\n')
         count++;

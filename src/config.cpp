@@ -24,30 +24,30 @@
 // clang-format off
 static const struct config_setting REGISTRY[] = {
     /* selection */
-    {.key = "preset", .env_var = "HAX_PRESET", .keep_empty = 1,
-     .description = "Preset from presets.<name> to apply at startup; empty disables"},
-    {.key = "provider", .env_var = "HAX_PROVIDER", .keep_empty = 1,
-     .description = "Provider id; /provider shows the available choices"},
-    {.key = "model", .env_var = "HAX_MODEL", .keep_empty = 1,
-     .description = "Model id (provider-specific; some auto-fill or require it)"},
-    {.key = "effort", .env_var = "HAX_EFFORT", .keep_empty = 1,
-     .description = "Reasoning effort (provider-specific); empty omits it"},
-    {.key = "system_prompt", .env_var = "HAX_SYSTEM_PROMPT", .keep_empty = 1,
+    {.key = "preset", .env_var = "HAX_PRESET",
+     .description = "Preset from presets.<name> to apply at startup; empty disables", .keep_empty = 1},
+    {.key = "provider", .env_var = "HAX_PROVIDER",
+     .description = "Provider id; /provider shows the available choices", .keep_empty = 1},
+    {.key = "model", .env_var = "HAX_MODEL",
+     .description = "Model id (provider-specific; some auto-fill or require it)", .keep_empty = 1},
+    {.key = "effort", .env_var = "HAX_EFFORT",
+     .description = "Reasoning effort (provider-specific); empty omits it", .keep_empty = 1},
+    {.key = "system_prompt", .env_var = "HAX_SYSTEM_PROMPT",
      .description = "Replace the built-in base prompt (context sections still follow); @path "
-                    "reads a file; (none) sends no system message at all"},
-    {.key = "system_prompt_append", .env_var = "HAX_SYSTEM_PROMPT_APPEND", .keep_empty = 1,
-     .description = "Text appended after the base system prompt; @path reads a file"},
-    {.key = "no_env", .env_var = "HAX_NO_ENV", .choices = CONFIG_CHOICES_BOOL,
-     .description = "Skip the Environment section in the system prompt"},
-    {.key = "no_agents_md", .env_var = "HAX_NO_AGENTS_MD", .choices = CONFIG_CHOICES_BOOL,
-     .description = "Skip AGENTS.md project instructions in the system prompt"},
-    {.key = "no_skills", .env_var = "HAX_NO_SKILLS", .choices = CONFIG_CHOICES_BOOL,
-     .description = "Skip the skills listing in the system prompt"},
-    {.key = "no_subagents", .env_var = "HAX_NO_SUBAGENTS", .choices = CONFIG_CHOICES_BOOL,
-     .description = "Skip the subagents section in the system prompt"},
-    {.key = "no_tasks", .env_var = "HAX_NO_TASKS", .choices = CONFIG_CHOICES_BOOL,
+                    "reads a file; (none) sends no system message at all", .keep_empty = 1},
+    {.key = "system_prompt_append", .env_var = "HAX_SYSTEM_PROMPT_APPEND",
+     .description = "Text appended after the base system prompt; @path reads a file", .keep_empty = 1},
+    {.key = "no_env", .env_var = "HAX_NO_ENV",
+     .description = "Skip the Environment section in the system prompt", .choices = CONFIG_CHOICES_BOOL},
+    {.key = "no_agents_md", .env_var = "HAX_NO_AGENTS_MD",
+     .description = "Skip AGENTS.md project instructions in the system prompt", .choices = CONFIG_CHOICES_BOOL},
+    {.key = "no_skills", .env_var = "HAX_NO_SKILLS",
+     .description = "Skip the skills listing in the system prompt", .choices = CONFIG_CHOICES_BOOL},
+    {.key = "no_subagents", .env_var = "HAX_NO_SUBAGENTS",
+     .description = "Skip the subagents section in the system prompt", .choices = CONFIG_CHOICES_BOOL},
+    {.key = "no_tasks", .env_var = "HAX_NO_TASKS",
      .description = "Disable background tasks: bash timeouts kill instead of detaching, and the "
-                    "task tools are not offered"},
+                    "task tools are not offered", .choices = CONFIG_CHOICES_BOOL},
 
     /* display */
     {.key = "markdown", .env_var = "HAX_MARKDOWN", .default_value = "1",
@@ -97,9 +97,9 @@ static const struct config_setting REGISTRY[] = {
 
     /* model catalog */
     {.key = "catalog.url", .env_var = "HAX_CATALOG_URL",
-     .default_value = "https://models.dev/api.json", .keep_empty = 1,
+     .default_value = "https://models.dev/api.json",
      .description = "Model-metadata catalog endpoint (models.dev api.json shape); empty disables "
-                    "fetching"},
+                    "fetching", .keep_empty = 1},
     {.key = "catalog.refresh", .env_var = "HAX_CATALOG_REFRESH", .default_value = "24h",
      .description = "Re-fetch the cached model catalog when older than this; 0 disables fetching",
      .kind = CONFIG_KIND_DURATION},
@@ -113,10 +113,10 @@ static const struct config_setting REGISTRY[] = {
      .default_value = "30",
      .description = "Delete sessions after this many inactive days; 0 disables pruning",
      .kind = CONFIG_KIND_INT, .max = 36500},
-    {.key = "transcript", .env_var = "HAX_TRANSCRIPT", .keep_empty = 1,
-     .description = "Path to mirror the Ctrl-T transcript view; empty disables"},
-    {.key = "trace", .env_var = "HAX_TRACE", .keep_empty = 1,
-     .description = "Path to a wire-level HTTP/SSE trace dump; empty disables"},
+    {.key = "transcript", .env_var = "HAX_TRANSCRIPT",
+     .description = "Path to mirror the Ctrl-T transcript view; empty disables", .keep_empty = 1},
+    {.key = "trace", .env_var = "HAX_TRACE",
+     .description = "Path to a wire-level HTTP/SSE trace dump; empty disables", .keep_empty = 1},
 
     /* tools */
     {.key = "image_input", .env_var = "HAX_IMAGE_INPUT", .default_value = "auto",
@@ -165,8 +165,8 @@ static const struct config_setting REGISTRY[] = {
      * its providers.* block so a compatible endpoint stays one-shot configurable) */
     {.key = "providers.openai-compatible.base_url", .env_var = "HAX_OPENAI_BASE_URL",
      .description = "Base URL of the OpenAI-compatible endpoint"},
-    {.key = "providers.openai-compatible.api_key", .env_var = "HAX_OPENAI_API_KEY", .secret = 1,
-     .description = "Bearer token for the OpenAI-compatible endpoint"},
+    {.key = "providers.openai-compatible.api_key", .env_var = "HAX_OPENAI_API_KEY",
+     .description = "Bearer token for the OpenAI-compatible endpoint", .secret = 1},
     {.key = "providers.openai-compatible.display_name", .env_var = "HAX_OPENAI_DISPLAY_NAME",
      .description = "Display name for the provider in the banner and picker"},
     {.key = "providers.openai-compatible.api", .env_var = "HAX_OPENAI_API",
@@ -176,20 +176,20 @@ static const struct config_setting REGISTRY[] = {
      .env_var = "HAX_OPENAI_REASONING_FORMAT",
      .description = "Reasoning request dialect: flat or nested", .choices = "flat|nested"},
     {.key = "providers.openai-compatible.reasoning_roundtrip",
-     .env_var = "HAX_REASONING_ROUNDTRIP", .keep_empty = 1,
-     .description = "Replay reasoning text to the model (off/on, or a field name)"},
+     .env_var = "HAX_REASONING_ROUNDTRIP",
+     .description = "Replay reasoning text to the model (off/on, or a field name)", .keep_empty = 1},
     {.key = "providers.openai-compatible.send_cache_key", .env_var = "HAX_OPENAI_SEND_CACHE_KEY",
-     .choices = CONFIG_CHOICES_TRISTATE,
      .description = "Send a stable prompt_cache_key (prefix-cache hint); auto uses the provider "
-                    "default"},
+                    "default",
+     .choices = CONFIG_CHOICES_TRISTATE},
     {.key = "providers.openai-compatible.request_cost", .env_var = "HAX_OPENAI_REQUEST_COST",
-     .choices = CONFIG_CHOICES_TRISTATE,
      .description = "Request usage accounting (`usage: {include: true}`) for per-response cost; "
-                    "auto uses the provider default"},
+                    "auto uses the provider default",
+     .choices = CONFIG_CHOICES_TRISTATE},
     {.key = "providers.openai-compatible.cache", .env_var = "HAX_OPENAI_CACHE",
-     .choices = CONFIG_CHOICES_TRISTATE,
      .description = "Send prompt cache_control breakpoints (routers fronting Anthropic models, "
-                    "which cache only on request); auto uses the provider default"},
+                    "which cache only on request); auto uses the provider default",
+     .choices = CONFIG_CHOICES_TRISTATE},
     {.key = "providers.openai-compatible.cache_ttl", .env_var = "HAX_OPENAI_CACHE_TTL",
      .description = "Cache breakpoint TTL: 5m or 1h (default 1h, suiting an interactive agent's "
                     "pauses)",
@@ -199,8 +199,8 @@ static const struct config_setting REGISTRY[] = {
     {.key = "providers.anthropic-compatible.base_url", .env_var = "HAX_ANTHROPIC_BASE_URL",
      .description = "Base URL of the Anthropic-compatible /v1 endpoint"},
     {.key = "providers.anthropic-compatible.api_key", .env_var = "HAX_ANTHROPIC_API_KEY",
-     .secret = 1,
-     .description = "x-api-key token for the Anthropic-compatible endpoint"},
+     .description = "x-api-key token for the Anthropic-compatible endpoint",
+     .secret = 1},
     {.key = "providers.anthropic-compatible.display_name", .env_var = "HAX_ANTHROPIC_DISPLAY_NAME",
      .description = "Display name for the provider in the banner and picker"},
     /* Unset follows model metadata; a registry default would make /config report a value the
@@ -218,8 +218,8 @@ static const struct config_setting REGISTRY[] = {
      .description = "Budget-mode thinking tokens (default: max_tokens - 1)",
      .kind = CONFIG_KIND_INT, .min = 1},
     {.key = "providers.anthropic-compatible.cache", .env_var = "HAX_ANTHROPIC_CACHE",
-     .choices = CONFIG_CHOICES_TRISTATE,
-     .description = "Send prompt cache_control breakpoints; auto uses the provider default"},
+     .description = "Send prompt cache_control breakpoints; auto uses the provider default",
+     .choices = CONFIG_CHOICES_TRISTATE},
     {.key = "providers.anthropic-compatible.cache_ttl", .env_var = "HAX_ANTHROPIC_CACHE_TTL",
      .description = "Cache breakpoint TTL: 5m or 1h (default 1h, suiting an interactive agent's "
                     "pauses)",
@@ -230,17 +230,17 @@ static const struct config_setting REGISTRY[] = {
     /* per-provider */
     {.key = "providers.llamacpp.base_url", .env_var = "HAX_LLAMACPP_BASE_URL",
      .description = "Full llama-server base URL; overrides the port setting"},
-    {.key = "providers.llamacpp.api_key", .env_var = "HAX_LLAMACPP_API_KEY", .secret = 1,
-     .description = "Bearer token when llama-server runs with --api-key"},
+    {.key = "providers.llamacpp.api_key", .env_var = "HAX_LLAMACPP_API_KEY",
+     .description = "Bearer token when llama-server runs with --api-key", .secret = 1},
     {.key = "providers.llamacpp.port", .env_var = "HAX_LLAMACPP_PORT", .default_value = "8080",
      .description = "Port for the local llama-server (when base_url is unset)",
      .kind = CONFIG_KIND_INT, .min = 1, .max = 65535},
     {.key = "providers.openrouter.title", .env_var = "HAX_OPENROUTER_TITLE",
-     .default_value = "hax", .keep_empty = 1,
-     .description = "X-Title header for OpenRouter attribution (empty disables)"},
+     .default_value = "hax",
+     .description = "X-Title header for OpenRouter attribution (empty disables)", .keep_empty = 1},
     {.key = "providers.openrouter.referer", .env_var = "HAX_OPENROUTER_REFERER",
-     .default_value = "https://usehax.dev", .keep_empty = 1,
-     .description = "HTTP-Referer header for OpenRouter attribution (empty disables)"},
+     .default_value = "https://usehax.dev",
+     .description = "HTTP-Referer header for OpenRouter attribution (empty disables)", .keep_empty = 1},
     {.key = "providers.mock.script", .env_var = "HAX_MOCK_SCRIPT",
      .description = "Path to a mock-provider script (mock provider only)"},
 };
@@ -332,8 +332,8 @@ static const char *scalar_as_string(const json_t *value)
     if (store.n_scalar_strings == store.scalar_strings_capacity) {
         store.scalar_strings_capacity =
             store.scalar_strings_capacity ? store.scalar_strings_capacity * 2 : 8;
-        store.scalar_strings = (scalar_string*)xrealloc(store.scalar_strings, store.scalar_strings_capacity *
-                                                                  sizeof(*store.scalar_strings));
+        store.scalar_strings = (scalar_string *)xrealloc(
+            store.scalar_strings, store.scalar_strings_capacity * sizeof(*store.scalar_strings));
     }
     struct scalar_string *entry = &store.scalar_strings[store.n_scalar_strings++];
     entry->node = value;
@@ -472,7 +472,7 @@ static void add_object_key(char ***keys, size_t *count, size_t *capacity, const 
 
     if (*count == *capacity) {
         *capacity = *capacity ? *capacity * 2 : 8;
-        *keys = (char**)xrealloc(*keys, *capacity * sizeof(**keys));
+        *keys = (char **)xrealloc(*keys, *capacity * sizeof(**keys));
     }
 
     char *copy = (char *)xmalloc(key_length + 1);
@@ -1319,8 +1319,8 @@ static void report_preset_defect(const char *name)
 {
     if (preset_defect_reported(name))
         return;
-    store.reported_presets = (char**)xrealloc(store.reported_presets, (store.n_reported_presets + 1) *
-                                                                  sizeof(*store.reported_presets));
+    store.reported_presets = (char **)xrealloc(
+        store.reported_presets, (store.n_reported_presets + 1) * sizeof(*store.reported_presets));
     store.reported_presets[store.n_reported_presets++] = xstrdup(name);
 }
 
@@ -1453,6 +1453,21 @@ int config_preset_save(const char *name, const struct config_preset *definition,
     char *path = NULL;
     json_t *updated = NULL;
     json_t *preset = NULL;
+    char *flat_key = NULL;
+    json_t *presets = NULL;
+    /* Keep the user-facing identity fields first in the serialized object. */
+    const struct {
+        const char *key;
+        const char *value;
+    } members[] = {
+        {"description", definition->description},
+        {"tint", definition->tint},
+        {"provider", definition->provider},
+        {"model", definition->model},
+        {"effort", definition->effort},
+        {"system_prompt", definition->system_prompt},
+        {"system_prompt_append", definition->system_prompt_append},
+    };
 
     if (error)
         *error = NULL;
@@ -1475,19 +1490,6 @@ int config_preset_save(const char *name, const struct config_preset *definition,
     if (!preset)
         goto out;
 
-    /* Keep the user-facing identity fields first in the serialized object. */
-    const struct {
-        const char *key;
-        const char *value;
-    } members[] = {
-        {"description", definition->description},
-        {"tint", definition->tint},
-        {"provider", definition->provider},
-        {"model", definition->model},
-        {"effort", definition->effort},
-        {"system_prompt", definition->system_prompt},
-        {"system_prompt_append", definition->system_prompt_append},
-    };
     for (size_t i = 0; i < sizeof(members) / sizeof(*members); i++) {
         if (members[i].value)
             json_object_set_new(preset, members[i].key, json_string(members[i].value));
@@ -1512,11 +1514,12 @@ int config_preset_save(const char *name, const struct config_preset *definition,
         goto out;
 
     /* Remove the flat fallback so the file does not retain two definitions of the same preset. */
-    char *flat_key = xasprintf("presets.%s", name);
+    flat_key = xasprintf("presets.%s", name);
     json_object_del(updated, flat_key);
     free(flat_key);
+    flat_key = NULL;
 
-    json_t *presets = json_object_get(updated, "presets");
+    presets = json_object_get(updated, "presets");
     if (presets && !json_is_object(presets)) {
         if (error)
             *error = xasprintf("\"presets\" in %s is not a block of presets — fix it first", path);

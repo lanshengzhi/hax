@@ -286,7 +286,7 @@ static int test_list_models(struct provider *provider, struct model_info **model
     (void)tick;
     (void)tick_user;
     *model_count = 2;
-    *models = (model_info*)xcalloc(*model_count, sizeof(**models));
+    *models = (model_info *)xcalloc(*model_count, sizeof(**models));
     model_info_init(&(*models)[0]);
     model_info_init(&(*models)[1]);
     (*models)[0].id = xstrdup("old");

@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include <poll.h>
 #include <pthread.h>
-#include "atomics.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +8,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#include "atomics.h"
 #include "config.h"
 #include "harness.h"
 #include "model_meta.h"
@@ -66,6 +66,7 @@ static int start_server(struct test_server *server)
         return -1;
 
     struct sockaddr_in address = {0};
+    socklen_t length = sizeof(address);
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (bind(server->listener_fd, (struct sockaddr *)&address, sizeof(address)) != 0 ||
@@ -73,7 +74,6 @@ static int start_server(struct test_server *server)
         goto fail;
     }
 
-    socklen_t length = sizeof(address);
     if (getsockname(server->listener_fd, (struct sockaddr *)&address, &length) != 0)
         goto fail;
     return ntohs(address.sin_port);

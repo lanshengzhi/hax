@@ -139,7 +139,8 @@ struct provider *provider_autoselect(void)
     /* Probe the remaining providers concurrently, then construct in priority order. */
     size_t factory_count = 0;
     const struct provider_factory *const *factories = provider_all(&factory_count);
-    struct availability_result *availability = (struct availability_result *)xcalloc(factory_count, sizeof(*availability));
+    struct availability_result *availability =
+        (struct availability_result *)xcalloc(factory_count, sizeof(*availability));
     probe_availability(factories, factory_count, availability);
 
     struct provider *provider = NULL;
@@ -207,7 +208,7 @@ static size_t split_choices(const char *choices, char ***values_out)
         size_t length = separator ? (size_t)(separator - start) : strlen(start);
         if (count == capacity) {
             capacity = capacity ? capacity * 2 : 8;
-            values = (char**)xrealloc(values, capacity * sizeof(*values));
+            values = (char **)xrealloc(values, capacity * sizeof(*values));
         }
         char *value = (char *)xmalloc(length + 1);
         memcpy(value, start, length);
@@ -304,7 +305,7 @@ static struct model_pick_result pick_model_from_list(struct provider *provider,
         const char **model_ids = (const char **)xmalloc(model_count * sizeof(*model_ids));
         for (size_t i = 0; i < model_count; i++)
             model_ids[i] = models[i].id;
-        catalog = (catalog_entry*)xmalloc(model_count * sizeof(*catalog));
+        catalog = (catalog_entry *)xmalloc(model_count * sizeof(*catalog));
         catalog_lookup_many(provider->catalog_id, model_ids, model_count, catalog, NULL);
         free(model_ids);
     }
@@ -610,8 +611,8 @@ void select_model(struct agent_state *state)
 
 static int compare_factory_labels(const void *left, const void *right)
 {
-    const struct provider_factory *const *left_factory = (const provider_factory* const*)left;
-    const struct provider_factory *const *right_factory = (const provider_factory* const*)right;
+    const struct provider_factory *const *left_factory = (const provider_factory *const *)left;
+    const struct provider_factory *const *right_factory = (const provider_factory *const *)right;
     return strcmp(provider_display_name(*left_factory), provider_display_name(*right_factory));
 }
 
@@ -626,12 +627,14 @@ static struct provider_pick_result choose_provider_factory(const char *current_p
     const struct provider_factory *const *registered_factories = provider_all(&factory_count);
 
     /* Picker order is alphabetical by display label; registry order remains autoselect priority. */
-    const struct provider_factory **factories = (const struct provider_factory **)xmalloc(factory_count * sizeof(*factories));
+    const struct provider_factory **factories =
+        (const struct provider_factory **)xmalloc(factory_count * sizeof(*factories));
     memcpy(factories, registered_factories, factory_count * sizeof(*factories));
     qsort(factories, factory_count, sizeof(*factories), compare_factory_labels);
 
     /* Pre-picker work uses bounded timeouts; cancellation starts at the picker. */
-    struct availability_result *availability = (struct availability_result *)xcalloc(factory_count, sizeof(*availability));
+    struct availability_result *availability =
+        (struct availability_result *)xcalloc(factory_count, sizeof(*availability));
     probe_availability(factories, factory_count, availability);
 
     /* Keep unavailable rows selectable because probe results are advisory and may become stale. */
@@ -709,12 +712,14 @@ void select_provider(struct agent_state *state)
 
     /* Construct under a snapshotted prospective selection. Default sentinels prevent the old
      * backend's model and effort from influencing value-dependent constructors. */
+    unsigned long diagnostics_before = 0;
+    struct provider *candidate = NULL;
     struct config_snapshot *snapshot = config_snapshot_take();
     config_set_override("provider", factory->id);
     config_set_override("model", CONFIG_VALUE_DEFAULT);
     config_set_override("effort", CONFIG_VALUE_DEFAULT);
-    unsigned long diagnostics_before = hax_diag_sequence();
-    struct provider *candidate = factory->create(factory->id);
+    diagnostics_before = hax_diag_sequence();
+    candidate = factory->create(factory->id);
     sync_constructor_diagnostics(state, diagnostics_before);
     if (!candidate) {
         config_snapshot_restore(snapshot);
@@ -828,6 +833,13 @@ int select_preset(struct agent_state *state, const char *name, int announce)
     size_t preset_count = config_preset_names(&names);
     char *selected_name = NULL;
     int result = -1;
+    char *error = NULL;
+    struct config_snapshot *snapshot = NULL;
+    const char *provider_id = NULL;
+    const struct provider_factory *factory = NULL;
+    unsigned long diagnostics_before = 0;
+    struct provider *candidate = NULL;
+    const char *model = NULL;
 
     if (!name) {
         if (preset_count == 0) {
@@ -843,8 +855,7 @@ int select_preset(struct agent_state *state, const char *name, int announce)
     }
 
     /* Preset application is transactional across overrides and provider construction. */
-    struct config_snapshot *snapshot = config_snapshot_take();
-    char *error = NULL;
+    snapshot = config_snapshot_take();
     if (config_preset_apply(name, CONFIG_TIER_RUN, &error) != 0) {
         ui_error("%s", error ? error : "preset failed to apply");
         free(error);
@@ -855,16 +866,16 @@ int select_preset(struct agent_state *state, const char *name, int announce)
 
     /* Always construct under preset overrides, even for the live provider id; value-dependent
      * reconciliation occurs during construction. */
-    const char *provider_id = config_str("provider");
-    const struct provider_factory *factory = provider_find(provider_id);
+    provider_id = config_str("provider");
+    factory = provider_find(provider_id);
     if (!factory) {
         ui_error("preset '%s': unknown provider '%s'", name, provider_id);
         config_snapshot_restore(snapshot);
         disp_sync_external_line(&state->render->disp);
         goto out;
     }
-    unsigned long diagnostics_before = hax_diag_sequence();
-    struct provider *candidate = factory->create(factory->id);
+    diagnostics_before = hax_diag_sequence();
+    candidate = factory->create(factory->id);
     sync_constructor_diagnostics(state, diagnostics_before);
     if (!candidate) {
         /* The constructor already diagnosed the failure. */
@@ -875,7 +886,7 @@ int select_preset(struct agent_state *state, const char *name, int announce)
 
     /* Validate the post-construction model before ownership transfer; construction may have
      * reconciled a discovered model into the override tier. */
-    const char *model = config_str("model");
+    model = config_str("model");
     if ((!model || !*model) && !(candidate->default_model && *candidate->default_model)) {
         ui_error("preset '%s': no model resolves for provider '%s' — name one in the preset", name,
                  factory->id);
@@ -975,7 +986,7 @@ static int confirm_overwrite(const char *name)
     char *selection_detail = buf_steal(&current_selection);
 
     struct picker_item items[] = {
-        {.label = "keep it", .description = "Leave the existing definition alone", .current = 1},
+        {.label = "keep it", .current = 1, .description = "Leave the existing definition alone"},
         {.label = "overwrite",
          .detail = selection_detail,
          .description = "Replace it with the current selection"},
@@ -1051,6 +1062,9 @@ void select_preset_save(struct agent_state *state, const char *argument)
         separator++;
     const char *tint_argument = *separator ? separator : NULL;
     char *tint = NULL;
+    char *error = NULL;
+    int preset_exists = 0;
+    const struct config_setting *tint_setting = NULL;
 
     if (!config_preset_name_valid(name)) {
         ui_error("'%s' can't be a preset name — use letters, digits, '.', '-' or '_', starting "
@@ -1059,7 +1073,7 @@ void select_preset_save(struct agent_state *state, const char *argument)
         disp_sync_external_line(&state->render->disp);
         goto out;
     }
-    const struct config_setting *tint_setting = config_setting_find("tint");
+    tint_setting = config_setting_find("tint");
     if (tint_argument && !config_value_valid(tint_setting, tint_argument)) {
         ui_error("unknown tint '%s' (expected %s)", tint_argument,
                  tint_setting ? tint_setting->choices : "");
@@ -1067,7 +1081,7 @@ void select_preset_save(struct agent_state *state, const char *argument)
         goto out;
     }
 
-    int preset_exists = config_preset_exists(name);
+    preset_exists = config_preset_exists(name);
     if (preset_exists && !confirm_overwrite(name)) {
         ui_note("left preset '%s' unchanged", name);
         disp_sync_external_line(&state->render->disp);
@@ -1086,29 +1100,30 @@ void select_preset_save(struct agent_state *state, const char *argument)
         tint = tint_pick.value;
     }
 
-    struct config_preset definition = {
-        .provider = agent_provider_id(provider),
-        /* Omit discovered server state so applying the preset re-discovers the model. */
-        .model = provider->model_discovered ? NULL : state->session->model,
-        .effort = state->session->effort,
-        .system_prompt = capture_prompt_setting("system_prompt"),
-        .system_prompt_append = capture_prompt_setting("system_prompt_append"),
-        .tint = tint,
-        /* Preserve the existing description on re-save. */
-        .description = preset_exists ? config_preset_description(name) : NULL,
-    };
-    char *error = NULL;
-    if (config_preset_save(name, &definition, &error) != 0) {
-        ui_error("%s", error ? error : "couldn't save the preset");
-        free(error);
+    {
+        struct config_preset definition = {
+            /* Preserve the existing description on re-save. */
+            .description = preset_exists ? config_preset_description(name) : NULL,
+            .tint = tint,
+            .provider = agent_provider_id(provider),
+            /* Omit discovered server state so applying the preset re-discovers the model. */
+            .model = provider->model_discovered ? NULL : state->session->model,
+            .effort = state->session->effort,
+            .system_prompt = capture_prompt_setting("system_prompt"),
+            .system_prompt_append = capture_prompt_setting("system_prompt_append"),
+        };
+        if (config_preset_save(name, &definition, &error) != 0) {
+            ui_error("%s", error ? error : "couldn't save the preset");
+            free(error);
+            disp_sync_external_line(&state->render->disp);
+            goto out;
+        }
+        ui_note("%s preset '%s' in config.json", preset_exists ? "updated" : "saved", name);
         disp_sync_external_line(&state->render->disp);
-        goto out;
-    }
-    ui_note("%s preset '%s' in config.json", preset_exists ? "updated" : "saved", name);
-    disp_sync_external_line(&state->render->disp);
 
-    /* Enter the saved stance so its name and tint become active and persistent. */
-    select_preset(state, name, 1);
+        /* Enter the saved stance so its name and tint become active and persistent. */
+        select_preset(state, name, 1);
+    }
 
 out:
     free(tint);
@@ -1438,7 +1453,8 @@ static const struct config_setting *choose_config_setting(void)
      * keys exist only to bind environment variables (registration also makes a key queryable
      * here by name, which is why the api_key rows are marked secret). Field semantics live in
      * the provider constructors. */
-    const struct config_setting **shown = (const struct config_setting **)xmalloc(setting_count * sizeof(*shown));
+    const struct config_setting **shown =
+        (const struct config_setting **)xmalloc(setting_count * sizeof(*shown));
     size_t shown_count = 0;
     for (size_t i = 0; i < setting_count; i++) {
         if (strncmp(settings[i].key, "providers.", strlen("providers.")) != 0)

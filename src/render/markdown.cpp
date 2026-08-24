@@ -246,7 +246,7 @@ static void table_emit_direct(const char *bytes, size_t n, int is_raw, void *use
 
 static void table_emit_text(void *user, const char *s, size_t n)
 {
-    emit_text((md_renderer*)user, s, n);
+    emit_text((md_renderer *)user, s, n);
 }
 
 static void table_emit_raw(void *user, const char *s, size_t n)
@@ -297,12 +297,12 @@ static void table_replay_raw(void *user, const char *s, size_t n)
 
 static void table_open_bold(void *user)
 {
-    open_bold((md_renderer*)user);
+    open_bold((md_renderer *)user);
 }
 
 static void table_close_bold(void *user)
 {
-    close_bold((md_renderer*)user);
+    close_bold((md_renderer *)user);
 }
 
 static void table_render_inline(void *user, const char *s, size_t n, int bold_base,

@@ -413,16 +413,19 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
 
     char *result = NULL;
     char *path = NULL;
+    size_t output_limit = 0;
+    long offset = 1;
+    long limit = 0;
+    int offset_provided = 0;
+    int limit_provided = 0;
     const char *raw_path = json_string_value(json_object_get(root, "path"));
     if (!raw_path || !*raw_path) {
         result = xstrdup("missing 'path' argument");
         goto out;
     }
 
-    long offset = 1;
-    long limit = 0;
-    int offset_provided;
-    int limit_provided;
+    offset = 1;
+    limit = 0;
     result = parse_line_argument(root, "offset", &offset, &offset_provided);
     if (result)
         goto out;
@@ -448,7 +451,7 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
         goto out;
     }
 
-    size_t output_limit = output_cap_bytes();
+    output_limit = output_cap_bytes();
     if (!offset_provided && !limit_provided && (size_t)st.st_size > output_limit) {
         result = xasprintf("%s is %lld bytes; cap is %zu. Pass offset/limit to read a slice, "
                            "or use bash with grep/head/tail.",
@@ -610,15 +613,15 @@ static const char READ_DESCRIPTION[] =
     "input.";
 
 static const struct tool_param READ_PARAMS[] = {
-    {.name = "path", .type = "string", .required = 1, .description = "Path to the file."},
+    {.name = "path", .type = "string", .description = "Path to the file.", .required = 1},
     {.name = "offset",
      .type = "integer",
-     .minimum = 1,
-     .description = "1-indexed first line to return. Default 1."},
+     .description = "1-indexed first line to return. Default 1.",
+     .minimum = 1},
     {.name = "limit",
      .type = "integer",
-     .minimum = 1,
-     .description = "Maximum number of lines to return. Default: to EOF."},
+     .description = "Maximum number of lines to return. Default: to EOF.",
+     .minimum = 1},
 };
 
 const struct tool TOOL_READ = {
@@ -629,7 +632,7 @@ const struct tool TOOL_READ = {
     .run = run,
     .preprocess_args = tool_relativize_path_args,
     .display = {.arg_name = "path",
-                .format_extra = format_line_range,
                 .preview_mode = TOOL_PREVIEW_COLLAPSED,
+                .format_extra = format_line_range,
                 .collapse_argument = collapse_path},
 };

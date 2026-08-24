@@ -57,10 +57,12 @@ static FILE *get_fp_locked(void)
 void trace_init(void)
 {
     pthread_mutex_lock(&trace_mu);
+    const char *path;
     if (trace_init_done)
         goto out_unlock;
     trace_init_done = 1;
-    const char *path = config_str("trace");
+    path = config_str("trace");
+
     if (!path || !*path)
         goto out_unlock;
     trace_fp = fopen(path, "we");
@@ -153,7 +155,8 @@ void trace_register_secret(const char *value)
     }
     if (trace_n_secrets == trace_secrets_capacity) {
         trace_secrets_capacity = trace_secrets_capacity ? trace_secrets_capacity * 2 : 8;
-        trace_secrets = (char**)xrealloc(trace_secrets, trace_secrets_capacity * sizeof(*trace_secrets));
+        trace_secrets =
+            (char **)xrealloc(trace_secrets, trace_secrets_capacity * sizeof(*trace_secrets));
     }
     trace_secrets[trace_n_secrets++] = xstrdup(value);
 out_unlock:
@@ -185,8 +188,8 @@ static char *redact_secrets_locked(const char *text, size_t len, size_t *out_len
         size_t match_len = 0;
         for (size_t i = 0; i < trace_n_secrets; i++) {
             size_t secret_len = strlen(trace_secrets[i]);
-            const char *found =
-                (const char*)find_bytes(text + position, len - position, trace_secrets[i], secret_len);
+            const char *found = (const char *)find_bytes(text + position, len - position,
+                                                         trace_secrets[i], secret_len);
             /* At equal positions the longest secret wins, or a registered prefix of another
              * secret would leave the tail of the longer one exposed. */
             if (found && (!match || found < match || (found == match && secret_len > match_len))) {
@@ -297,11 +300,12 @@ out_unlock:
 void trace_sse_event(const char *event_name, const char *data)
 {
     pthread_mutex_lock(&trace_mu);
+    const char *name;
     FILE *fp = get_fp_locked();
     if (!fp)
         goto out_unlock;
 
-    const char *name = (event_name && *event_name) ? event_name : "(unnamed)";
+    name = (event_name && *event_name) ? event_name : "(unnamed)";
     char ts[64];
     format_ts_locked(ts, sizeof(ts));
     fprintf(fp, "\n### event: %s  (%s)\n\n", name, ts);

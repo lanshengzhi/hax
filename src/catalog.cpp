@@ -3,7 +3,6 @@
 
 #include <jansson.h>
 #include <libgen.h>
-#include "atomics.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +11,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include "atomics.h"
 #include "config.h"
 #include "effort.h"
 #include "util.h"
@@ -558,7 +558,7 @@ static void memo_add(const char *provider_id, const char *model, const struct ca
 {
     if (g_memo_count == g_memo_capacity) {
         g_memo_capacity = g_memo_capacity ? g_memo_capacity * 2 : 4;
-        g_memo = (memo_entry*)xrealloc(g_memo, g_memo_capacity * sizeof(*g_memo));
+        g_memo = (memo_entry *)xrealloc(g_memo, g_memo_capacity * sizeof(*g_memo));
     }
     struct memo_entry *memo = &g_memo[g_memo_count++];
     memo->provider_id = xstrdup(provider_id);

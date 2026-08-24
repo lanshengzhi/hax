@@ -93,12 +93,12 @@ static int response_stream(struct provider *provider, const struct context *cont
         {.kind = EV_TEXT_DELTA, .u = {.text_delta = {.text = "second\n"}}},
         {.kind = EV_DONE,
          .u = {.done = {.stop_reason = "end_turn",
-                    .usage = {.input_tokens = -1,
-                              .output_tokens = -1,
-                              .cached_tokens = -1,
-                              .cache_write_tokens = -1,
-                              .cache_write_1h_tokens = -1,
-                              .cost = -1}}}},
+                        .usage = {.input_tokens = -1,
+                                  .output_tokens = -1,
+                                  .cached_tokens = -1,
+                                  .cache_write_tokens = -1,
+                                  .cache_write_1h_tokens = -1,
+                                  .cost = -1}}}},
     };
     for (size_t i = 0; i < sizeof(events) / sizeof(events[0]); i++)
         if (callback(&events[i], user))

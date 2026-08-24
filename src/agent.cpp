@@ -2,7 +2,6 @@
 #include "agent.h"
 
 #include <stdarg.h>
-#include "atomics.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +11,7 @@
 #include "agent_dispatch.h"
 #include "agent_loop.h"
 #include "agent_usage.h"
+#include "atomics.h"
 #include "banner.h"
 #include "catalog.h"
 #include "compact.h"

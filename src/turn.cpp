@@ -56,7 +56,7 @@ static void append_item(struct turn *turn, struct item item)
 {
     if (turn->n_items == turn->cap_items) {
         size_t capacity = turn->cap_items ? turn->cap_items * 2 : 16;
-        turn->items = (item*)xrealloc(turn->items, capacity * sizeof(*turn->items));
+        turn->items = (struct item *)xrealloc(turn->items, capacity * sizeof(*turn->items));
         turn->cap_items = capacity;
     }
     turn->items[turn->n_items++] = item;
@@ -130,8 +130,8 @@ static void start_tool_call(struct turn *turn, const char *id, const char *name)
 {
     if (turn->n_pending_calls == turn->cap_pending_calls) {
         size_t capacity = turn->cap_pending_calls ? turn->cap_pending_calls * 2 : 4;
-        turn->pending_calls =
-            (pending_tool_call*)xrealloc(turn->pending_calls, capacity * sizeof(*turn->pending_calls));
+        turn->pending_calls = (pending_tool_call *)xrealloc(
+            turn->pending_calls, capacity * sizeof(*turn->pending_calls));
         turn->cap_pending_calls = capacity;
     }
 

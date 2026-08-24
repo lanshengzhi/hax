@@ -472,7 +472,8 @@ static void test_session_absorb_no_tool_call(void)
 
     struct turn t;
     turn_init(&t);
-    feed_turn(&t, (struct stream_event){.kind = EV_TEXT_DELTA, .u = {.text_delta = {.text = "answer"}}});
+    feed_turn(
+        &t, (struct stream_event){.kind = EV_TEXT_DELTA, .u = {.text_delta = {.text = "answer"}}});
     feed_turn(&t, (struct stream_event){.kind = EV_DONE});
 
     struct agent_absorb_result absorbed = agent_session_absorb(&s, &t);
@@ -495,9 +496,11 @@ static void test_session_absorb_with_tool_call(void)
     turn_init(&t);
     feed_turn(&t, (struct stream_event){.kind = EV_TOOL_CALL_START,
                                         .u = {.tool_call_start = {.id = "c1", .name = "bash"}}});
-    feed_turn(&t, (struct stream_event){.kind = EV_TOOL_CALL_DELTA,
-                                        .u = {.tool_call_delta = {.id = "c1", .args_delta = "{}"}}});
-    feed_turn(&t, (struct stream_event){.kind = EV_TOOL_CALL_END, .u = {.tool_call_end = {.id = "c1"}}});
+    feed_turn(&t,
+              (struct stream_event){.kind = EV_TOOL_CALL_DELTA,
+                                    .u = {.tool_call_delta = {.id = "c1", .args_delta = "{}"}}});
+    feed_turn(
+        &t, (struct stream_event){.kind = EV_TOOL_CALL_END, .u = {.tool_call_end = {.id = "c1"}}});
     feed_turn(&t, (struct stream_event){.kind = EV_DONE});
 
     struct agent_absorb_result absorbed = agent_session_absorb(&s, &t);

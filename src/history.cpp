@@ -108,7 +108,7 @@ static char *summarized_preview_body(const struct item *call, const struct item 
     char *body = NULL;
     if (json_is_string(content)) {
         *body_len = json_string_length(content);
-        body = (char*)xmalloc(*body_len + 1);
+        body = (char *)xmalloc(*body_len + 1);
         memcpy(body, json_string_value(content), *body_len);
         body[*body_len] = '\0';
     }

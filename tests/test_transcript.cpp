@@ -558,9 +558,9 @@ static char *render_provenance(struct turn_usage *usage, const char *provider, c
         {.kind = ITEM_TURN_BOUNDARY},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = (char *)"answer"},
         {.kind = ITEM_TURN_USAGE,
-         .usage = usage,
          .provider = (char *)provider,
-         .model = (char *)model},
+         .model = (char *)model,
+         .usage = usage},
     };
     return render_to_string(NULL, items, sizeof(items) / sizeof(items[0]));
 }

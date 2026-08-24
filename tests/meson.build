@@ -1,11 +1,11 @@
 # Each entry is just the test's source path; everything else is derived. The
 # registered test name is the path with the `test_` prefix and `.c` suffix
-# stripped, keeping the subdirectory (so `tools/test_read.c` -> `tools/read`,
-# `transport/test_sse.c` -> `transport/sse`, top-level `test_util.c` -> `util`).
+# stripped, keeping the subdirectory (so `tools/test_read.cpp` -> `tools/read`,
+# `transport/test_sse.cpp` -> `transport/sse`, top-level `test_util.cpp` -> `util`).
 # That makes this list a direct mirror of the `sources` list in the top-level
 # meson.build — keep it grouped by subdirectory and sorted within each group.
 #
-# Every test is a single .c file linked against `hax_dep`: lazy static-archive
+# Every test is a single .cpp file linked against `hax_dep`: lazy static-archive
 # linking pulls in only the production objects it transitively references, and
 # the dependency carries the libcurl/jansson/threads include dirs and link
 # flags — so a test needs nothing here but its source path.

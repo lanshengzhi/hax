@@ -274,7 +274,7 @@ int item_from_json(const json_t *object, struct item *out)
     json_t *images = json_object_get(object, "images");
     size_t image_count = json_is_array(images) ? json_array_size(images) : 0;
     if (image_count > 0) {
-        out->images = (item_image*)xcalloc(image_count, sizeof(*out->images));
+        out->images = (item_image *)xcalloc(image_count, sizeof(*out->images));
         for (size_t i = 0; i < image_count; i++) {
             json_t *image_object = json_array_get(images, i);
             struct item_image *image = &out->images[out->n_images];
@@ -445,15 +445,16 @@ static int prepare_fresh_session(struct session_log *log)
     char *cwd = getcwd(NULL, 0);
     if (!cwd)
         return -1;
+    char uuid[37];
+    time_t now = 0;
     char *directory = session_directory(cwd);
     if (!directory) {
         free(cwd);
         return -1;
     }
 
-    char uuid[37];
     gen_uuid_v4(uuid);
-    time_t now = time(NULL);
+    now = time(NULL);
     struct tm utc;
     gmtime_r(&now, &utc);
     char filename_time[32];
@@ -532,6 +533,7 @@ struct session_log *session_log_resume(const char *path, const char *provider, c
 static FILE *open_session_file(const char *path, enum session_file_mode mode)
 {
     /* Append omits O_CREAT so a removed session is not recreated without a header. */
+    FILE *file;
     int flags = O_CLOEXEC;
     flags |= mode == SESSION_FILE_APPEND ? O_RDWR | O_APPEND : O_CREAT | O_WRONLY | O_TRUNC;
     int fd = open(path, flags, 0600);
@@ -555,7 +557,7 @@ static FILE *open_session_file(const char *path, enum session_file_mode mode)
                                       (last_byte != '\n' && write(fd, "\n", 1) != 1)))
             goto error;
     }
-    FILE *file = fdopen(fd, mode == SESSION_FILE_APPEND ? "a" : "w");
+    file = fdopen(fd, mode == SESSION_FILE_APPEND ? "a" : "w");
     if (!file)
         goto error;
     setvbuf(file, NULL, _IOLBF, 0);
@@ -919,6 +921,11 @@ int session_fork_file(const char *source_path, size_t keep_turns, char **out_pat
     json_t *header = NULL;
     char *header_line = NULL;
     char *destination_path = NULL;
+    const char *source_id = NULL;
+    size_t header_capacity = 0;
+    ssize_t header_length = 0;
+    char uuid[37];
+    time_t now = 0;
 
     long cut_offset = find_turn_cut_offset(source_path, keep_turns);
     if (cut_offset < 0)
@@ -927,17 +934,15 @@ int session_fork_file(const char *source_path, size_t keep_turns, char **out_pat
     source = fopen(source_path, "r");
     if (!source)
         goto out;
-    size_t header_capacity = 0;
-    ssize_t header_length = getline(&header_line, &header_capacity, source);
+    header_length = getline(&header_line, &header_capacity, source);
     if (header_length < 0)
         goto out;
     header = json_loads(header_line, 0, NULL);
     if (!json_is_object(header))
         goto out;
 
-    char uuid[37];
     gen_uuid_v4(uuid);
-    time_t now = time(NULL);
+    now = time(NULL);
     struct tm utc;
     gmtime_r(&now, &utc);
     char filename_time[32];
@@ -945,7 +950,7 @@ int session_fork_file(const char *source_path, size_t keep_turns, char **out_pat
     strftime(filename_time, sizeof(filename_time), "%Y-%m-%dT%H-%M-%SZ", &utc);
     strftime(header_time, sizeof(header_time), "%Y-%m-%dT%H:%M:%SZ", &utc);
 
-    const char *source_id = json_string_value(json_object_get(header, "id"));
+    source_id = json_string_value(json_object_get(header, "id"));
     if (source_id)
         json_object_set_new(header, "forked_from", json_string(source_id));
     json_object_set_new(header, "id", json_string(uuid));
@@ -997,7 +1002,7 @@ static void push_item(struct item **items, size_t *count, size_t *capacity, stru
 {
     if (*count == *capacity) {
         *capacity = *capacity ? *capacity * 2 : 16;
-        *items = (item*)xrealloc(*items, *capacity * sizeof(**items));
+        *items = (struct item *)xrealloc(*items, *capacity * sizeof(**items));
     }
     (*items)[(*count)++] = item;
 }
@@ -1356,7 +1361,7 @@ int session_list(const char *cwd, struct session_entry **out_entries, size_t *ou
         };
         if (count == capacity) {
             capacity = capacity ? capacity * 2 : 8;
-            entries = (session_entry*)xrealloc(entries, capacity * sizeof(*entries));
+            entries = (session_entry *)xrealloc(entries, capacity * sizeof(*entries));
         }
         entries[count++] = entry;
     }

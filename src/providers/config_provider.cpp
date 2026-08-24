@@ -424,7 +424,13 @@ static struct provider *config_provider_new(const char *name)
         .display_name = display,
         .default_base_url = base,
         .api_key_env = api_key_env,
+        .config_prefix = cfg_prefix,
+        .catalog_id = resolve_catalog_id(name, r),
         .wire = wire,
+        /* model_apis or api "catalog" declares a mixed-protocol gateway, so catalog hints apply
+         * there; a single-protocol provider keeps its explicit api regardless of catalog
+         * metadata. */
+        .catalog_wires = provider_routes_wires(name),
         .send_cache_key_default = r->send_cache_key,
         /* The recipe supplies only the default; the preset overlays <prefix>.reasoning_format
          * like every other quirk field. */
@@ -432,12 +438,6 @@ static struct provider *config_provider_new(const char *name)
         .efforts = with_efforts ? OPENAI_EFFORT_LADDER : NULL,
         .n_efforts = with_efforts ? OPENAI_EFFORT_LADDER_N : 0,
         .length_hint = r->length_hint,
-        .config_prefix = cfg_prefix,
-        .catalog_id = resolve_catalog_id(name, r),
-        /* model_apis or api "catalog" declares a mixed-protocol gateway, so catalog hints apply
-         * there; a single-protocol provider keeps its explicit api regardless of catalog
-         * metadata. */
-        .catalog_wires = provider_routes_wires(name),
     };
     if (strcasecmp(api, "catalog") == 0 && !preset.catalog_id)
         hax_warn("provider '%s': api \"catalog\" routes by catalog metadata, but catalog_id "
@@ -518,7 +518,7 @@ static struct provider_factory *make_factory(const char *name)
     struct provider_factory *f = (struct provider_factory *)xcalloc(1, sizeof(*f));
     f->id = xstrdup(name); /* process-lifetime; the registry never frees these */
     f->display_name = provider_recipe_find(name)->display_name;
-    f->new = config_provider_new;
+    f->create = config_provider_new;
     f->prepare_availability = config_provider_prepare_availability;
     return f;
 }
@@ -533,7 +533,7 @@ const struct provider_factory *const *config_providers(size_t *n)
         size_t n_cfg = config_object_keys("providers", &names);
         size_t n_recipes;
         const struct provider_recipe *recipes = provider_recipes(&n_recipes);
-        factories = (const provider_factory**)xcalloc(n_recipes + n_cfg, sizeof(*factories));
+        factories = (const provider_factory **)xcalloc(n_recipes + n_cfg, sizeof(*factories));
         /* Recipes first, in shipped order; then config-only names. A config block matching a
          * recipe name overlays that recipe at construction — it is not a second factory. */
         for (size_t i = 0; i < n_recipes; i++)

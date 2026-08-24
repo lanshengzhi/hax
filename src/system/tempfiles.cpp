@@ -30,7 +30,7 @@ static void path_list_add(struct path_list *list, const char *path)
 {
     if (list->count == list->capacity) {
         list->capacity = list->capacity ? list->capacity * 2 : 4;
-        list->items = (char**)xrealloc(list->items, list->capacity * sizeof(*list->items));
+        list->items = (char **)xrealloc(list->items, list->capacity * sizeof(*list->items));
     }
     list->items[list->count++] = xstrdup(path);
 }

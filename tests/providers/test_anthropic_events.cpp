@@ -96,7 +96,7 @@ static void reset_capture(struct capture_state *capture)
 
 /* NOLINTBEGIN(bugprone-macro-parentheses): the arguments name declared variables */
 #define EVENTS_FIXTURE(capture, parser)                                                            \
-    struct capture_state capture = {};                                                            \
+    struct capture_state capture = {};                                                             \
     struct anthropic_events parser;                                                                \
     anthropic_events_init(&parser, capture_event, &capture)
 

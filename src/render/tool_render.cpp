@@ -71,7 +71,7 @@ void tool_render_init(struct tool_render *render, struct disp *disp, struct spin
     utf8_sanitizer_init(&render->sanitizer);
     render->mode = mode;
     if (mode == TOOL_RENDER_HEAD_TAIL)
-        render->tail = (char*)xmalloc(TAIL_RING_CAPACITY);
+        render->tail = (char *)xmalloc(TAIL_RING_CAPACITY);
     buf_init(&render->line);
     buf_init(&render->status_line);
     buf_init(&render->diff_line);
@@ -90,7 +90,7 @@ void tool_render_set_mode(struct tool_render *render, enum tool_render_mode mode
     if (render->mode == mode)
         return;
     if (mode == TOOL_RENDER_HEAD_TAIL) {
-        render->tail = (char*)xmalloc(TAIL_RING_CAPACITY);
+        render->tail = (char *)xmalloc(TAIL_RING_CAPACITY);
     } else if (render->mode == TOOL_RENDER_HEAD_TAIL) {
         free(render->tail);
         render->tail = NULL;
@@ -413,7 +413,7 @@ void tool_render_feed(struct tool_render *render, const char *bytes, size_t len)
     char stack_sanitized[UTF8_SANITIZE_FEED_MAX(4096)];
     size_t sanitized_cap = UTF8_SANITIZE_FEED_MAX(stripped_len);
     char *sanitized =
-        sanitized_cap <= sizeof(stack_sanitized) (char*)? stack_sanitized : xmalloc(sanitized_cap);
+        sanitized_cap <= sizeof(stack_sanitized) ? stack_sanitized : (char *)xmalloc(sanitized_cap);
     size_t sanitized_len =
         utf8_sanitizer_feed(&render->sanitizer, stripped, stripped_len, sanitized);
 

@@ -243,7 +243,7 @@ static int parse_command(const char *line, struct parsed_command *parsed)
         return 0;
 
     size_t name_length = (size_t)(cursor - name);
-    parsed->name = (char*)xmalloc(name_length + 1);
+    parsed->name = (char *)xmalloc(name_length + 1);
     memcpy(parsed->name, name, name_length);
     parsed->name[name_length] = '\0';
 
@@ -274,6 +274,10 @@ enum slash_result slash_dispatch(const char *line, struct agent_state *state)
 
     enum slash_result result;
     const struct slash_command *command = find_command(parsed.name);
+    struct command_call call = {
+        .state = state,
+        .argument = NULL,
+    };
     if (!command) {
         ui_error("unknown command: /%s. type /help for the list.", parsed.name);
         result = SLASH_UNKNOWN;
@@ -285,10 +289,7 @@ enum slash_result slash_dispatch(const char *line, struct agent_state *state)
         goto raw_output;
     }
 
-    struct command_call call = {
-        .state = state,
-        .argument = command->accepts_argument ? parsed.argument : NULL,
-    };
+    call.argument = command->accepts_argument ? parsed.argument : NULL;
     command->handler(&call);
     if (command->display == COMMAND_DISPLAY_RAW)
         disp_sync_external_line(disp);
@@ -564,7 +565,7 @@ static void kill_tasks(const char *arguments)
         }
         if (id_count == id_capacity) {
             id_capacity = id_capacity ? id_capacity * 2 : 4;
-            ids = (const char**)xrealloc(ids, id_capacity * sizeof(*ids));
+            ids = (const char **)xrealloc(ids, id_capacity * sizeof(*ids));
         }
         ids[id_count++] = word;
     }
@@ -604,7 +605,7 @@ static void run_tasks(const struct command_call *call)
 
     struct task_status {
         char text[40];
-    } *statuses = xmalloc(run_tasks(const command_call*)::task_status*)(task_count * sizeof(*statuses));
+    } *statuses = (struct task_status *)xmalloc(task_count * sizeof(*statuses));
     int terminal_width = display_width();
     int id_width = 4;
     int status_width = 0;

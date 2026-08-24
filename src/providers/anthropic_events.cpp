@@ -64,7 +64,8 @@ static struct anthropic_content_block *add_block(struct anthropic_events *parser
 {
     if (parser->n_blocks == parser->block_capacity) {
         size_t capacity = parser->block_capacity ? parser->block_capacity * 2 : 4;
-        parser->blocks = (anthropic_content_block*)xrealloc(parser->blocks, capacity * sizeof(*parser->blocks));
+        parser->blocks =
+            (anthropic_content_block *)xrealloc(parser->blocks, capacity * sizeof(*parser->blocks));
         parser->block_capacity = capacity;
     }
 
@@ -297,9 +298,9 @@ static void emit_terminal_error(struct anthropic_events *parser, const char *mes
     struct stream_event event = {
         .kind = EV_ERROR,
         .u = {.error = {.message = message,
-                    .http_status = 0,
-                    .usage = &parser->usage,
-                    .response = &response}},
+                        .http_status = 0,
+                        .usage = &parser->usage,
+                        .response = &response}},
     };
     emit(parser, &event);
 }
@@ -325,8 +326,8 @@ static void handle_message_stop(struct anthropic_events *parser)
     struct stream_event event = {
         .kind = EV_DONE,
         .u = {.done = {.stop_reason = reason ? reason : "end_turn",
-                   .usage = parser->usage,
-                   .response = response_of(parser)}},
+                       .usage = parser->usage,
+                       .response = response_of(parser)}},
     };
     emit(parser, &event);
 }

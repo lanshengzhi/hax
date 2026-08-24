@@ -72,7 +72,8 @@ void agent_session_append(struct agent_session *session, struct item item)
 {
     if (session->n_items == session->cap_items) {
         size_t capacity = session->cap_items ? session->cap_items * 2 : 16;
-        session->items = (item*)xrealloc(session->items, capacity * sizeof(*session->items));
+        session->items =
+            (struct item *)xrealloc(session->items, capacity * sizeof(*session->items));
         session->cap_items = capacity;
     }
     session->items[session->n_items++] = item;
@@ -217,7 +218,7 @@ void agent_session_init(struct agent_session *session, struct provider *provider
     session->effort = resolve_effort(provider, session->model);
 
     if (!opts->raw) {
-        session->tools = (tool_def*)xmalloc(N_TOOLS * sizeof(*session->tools));
+        session->tools = (tool_def *)xmalloc(N_TOOLS * sizeof(*session->tools));
         for (size_t i = 0; i < N_TOOLS; i++) {
             const struct tool_def *def =
                 TOOLS[i]->advertise ? TOOLS[i]->advertise() : &TOOLS[i]->def;
@@ -410,9 +411,9 @@ void agent_session_add_turn_usage(struct agent_session *session, const struct pr
     agent_session_append(
         session, (struct item){
                      .kind = ITEM_TURN_USAGE,
-                     .usage = turn_usage,
                      .provider = session->provider_id ? xstrdup(session->provider_id) : NULL,
                      .model = session->model && *session->model ? xstrdup(session->model) : NULL,
+                     .usage = turn_usage,
                  });
 }
 

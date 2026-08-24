@@ -87,7 +87,8 @@ static void add_tool_call(struct responses_events *events, const char *item_id, 
 {
     if (events->tool_call_count == events->tool_call_capacity) {
         size_t capacity = events->tool_call_capacity ? events->tool_call_capacity * 2 : 4;
-        events->tool_calls = (responses_tool_call*)xrealloc(events->tool_calls, capacity * sizeof(*events->tool_calls));
+        events->tool_calls = (responses_tool_call *)xrealloc(
+            events->tool_calls, capacity * sizeof(*events->tool_calls));
         events->tool_call_capacity = capacity;
     }
 
@@ -328,7 +329,8 @@ static void emit_terminal_error(struct responses_events *events, const char *mes
     struct stream_response response = response_of(events);
     struct stream_event event = {
         .kind = EV_ERROR,
-        .u = {.error = {.message = message, .http_status = 0, .usage = &usage, .response = &response}},
+        .u = {.error =
+                  {.message = message, .http_status = 0, .usage = &usage, .response = &response}},
     };
     emit_event(events, &event);
 }

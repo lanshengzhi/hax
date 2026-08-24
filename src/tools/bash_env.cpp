@@ -112,7 +112,7 @@ char **bash_build_child_env(void)
 
     size_t fixed_count = sizeof(FIXED_OVERRIDES) / sizeof(FIXED_OVERRIDES[0]);
     char **child_env =
-        (char**)xmalloc((inherited_count + fixed_count + dynamic_count + 1) * sizeof(*child_env));
+        (char **)xmalloc((inherited_count + fixed_count + dynamic_count + 1) * sizeof(*child_env));
     size_t child_count = 0;
     for (size_t i = 0; environ[i]; i++) {
         if (!entry_is_overridden(environ[i], dynamic, dynamic_count))

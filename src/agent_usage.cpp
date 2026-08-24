@@ -53,7 +53,8 @@ void agent_spend_account(struct spend_totals *totals, const struct stream_usage 
 
     if (totals->count == totals->capacity) {
         totals->capacity = totals->capacity ? totals->capacity * 2 : 8;
-        totals->records = (spend_record*)xrealloc(totals->records, totals->capacity * sizeof(*totals->records));
+        totals->records =
+            (spend_record *)xrealloc(totals->records, totals->capacity * sizeof(*totals->records));
     }
 
     struct spend_record *record = &totals->records[totals->count++];

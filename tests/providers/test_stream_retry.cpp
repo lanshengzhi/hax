@@ -2,7 +2,6 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
-#include "atomics.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +9,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#include "atomics.h"
 #include "harness.h"
 #include "provider.h"
 #include "util.h"
@@ -97,13 +97,13 @@ static int start_server(struct test_server *server, pthread_t *thread)
         return -1;
 
     struct sockaddr_in address = {0};
+    socklen_t address_len = sizeof(address);
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (bind(server->listener_fd, (struct sockaddr *)&address, sizeof(address)) != 0 ||
         listen(server->listener_fd, 1) != 0)
         goto error;
 
-    socklen_t address_len = sizeof(address);
     if (getsockname(server->listener_fd, (struct sockaddr *)&address, &address_len) != 0)
         goto error;
     if (pthread_create(thread, NULL, serve_script, server) != 0)

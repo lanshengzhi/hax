@@ -7,7 +7,6 @@
 #include <limits.h>
 #include <locale.h>
 #include <stdarg.h>
-#include "atomics.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +15,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include "atomics.h"
 #include "terminal/ansi.h"
 #include "terminal/theme.h"
 
@@ -637,7 +637,7 @@ static void buf_grow(struct buf *buf, size_t required_capacity)
         }
         capacity *= 2;
     }
-    buf->data = (char*)xrealloc(buf->data, capacity);
+    buf->data = (char *)xrealloc(buf->data, capacity);
     buf->cap = capacity;
 }
 

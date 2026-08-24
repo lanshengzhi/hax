@@ -649,7 +649,7 @@ static int codex_list_models(struct provider *provider, struct model_info **mode
 
     size_t entry_count = json_array_size(models);
     struct model_info *listed_models =
-        entry_count (model_info*)? xmalloc(entry_count * sizeof(*listed_models)) : NULL;
+        entry_count ? (model_info *)xmalloc(entry_count * sizeof(*listed_models)) : NULL;
     size_t listed_count = 0;
     size_t slug_count = 0;
     for (size_t i = 0; i < entry_count; i++) {

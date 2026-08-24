@@ -85,7 +85,8 @@ static int emit_chunked(stream_cb callback, void *callback_user, const char *tex
             event = (struct stream_event){.kind = EV_REASONING_DELTA,
                                           .u = {.reasoning_delta = {.text = chunk}}};
         else
-            event = (struct stream_event){.kind = EV_TEXT_DELTA, .u = {.text_delta = {.text = chunk}}};
+            event =
+                (struct stream_event){.kind = EV_TEXT_DELTA, .u = {.text_delta = {.text = chunk}}};
         int rc = callback(&event, callback_user);
         if (rc)
             return rc;
@@ -373,7 +374,8 @@ static enum script_result play_script_turn(FILE *script, stream_cb callback, voi
             if (msleep(delay_ms, tick, tick_user))
                 rc = -1;
             else {
-                struct stream_event event = {.kind = EV_TEXT_DELTA, .u = {.text_delta = {.text = " "}}};
+                struct stream_event event = {.kind = EV_TEXT_DELTA,
+                                             .u = {.text_delta = {.text = " "}}};
                 rc = callback(&event, callback_user);
             }
         } else if (match_directive(directive, "tool", &argument)) {

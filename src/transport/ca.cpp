@@ -3,13 +3,13 @@
 
 #include <ctype.h>
 #include <dirent.h>
-#include "atomics.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <curl/curl.h>
 #include <curl/curlver.h>
 
+#include "atomics.h"
 #include "util.h"
 
 /* The well-known locations curl's configure, Go, and rust-native-certs also probe, minus

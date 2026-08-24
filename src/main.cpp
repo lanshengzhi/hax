@@ -173,6 +173,9 @@ int main(int argc, char **argv)
     char *resume_path = NULL;
     struct provider *provider = NULL;
     struct cli_options options;
+    enum cli_session_result session_result = CLI_SESSION_ERROR;
+    int restore_preset = 0;
+    unsigned long diagnostics_before_provider = 0;
 
     enum cli_parse_result parse_result = cli_parse(argc, argv, &options);
     if (parse_result == CLI_PARSE_EXIT) {
@@ -184,7 +187,7 @@ int main(int argc, char **argv)
     if (cli_read_prompt(&options, argc, argv, stdin, isatty(fileno(stdin)), &prompt) != 0)
         goto cleanup_config;
 
-    enum cli_session_result session_result = cli_resolve_session(&options, &resume_path);
+    session_result = cli_resolve_session(&options, &resume_path);
     if (session_result == CLI_SESSION_EXIT) {
         result = 0;
         goto cleanup_config;
@@ -193,7 +196,7 @@ int main(int argc, char **argv)
         goto cleanup_config;
 
     options.agent_options.resume_path = resume_path;
-    int restore_preset = !run_replaces_resumed_preset(&options);
+    restore_preset = !run_replaces_resumed_preset(&options);
     if (resume_path &&
         restore_resumed_selection(resume_path, options.one_shot, restore_preset) != 0)
         goto cleanup_config;
@@ -211,7 +214,7 @@ int main(int argc, char **argv)
     theme_init();
     initialize_run_services(resume_path);
 
-    unsigned long diagnostics_before_provider = hax_diag_sequence();
+    diagnostics_before_provider = hax_diag_sequence();
     provider =
         select_initial_provider(options.one_shot, &options.agent_options.provider_autoselected);
     if (options.one_shot && provider && hax_diag_sequence() != diagnostics_before_provider) {

@@ -3,11 +3,11 @@
 
 #include <assert.h>
 #include <pthread.h>
-#include "atomics.h"
 #include <stdbool.h>
 #include <stdlib.h>
 #include <time.h>
 
+#include "atomics.h"
 #include "util.h"
 
 struct bg_job {
@@ -87,7 +87,7 @@ int bg_job_cancel_requested(const struct bg_job *job)
 
 int bg_job_cancel_tick(void *job)
 {
-    return bg_job_cancel_requested((const bg_job*)job);
+    return bg_job_cancel_requested((const bg_job *)job);
 }
 
 void bg_job_join(struct bg_job *job)

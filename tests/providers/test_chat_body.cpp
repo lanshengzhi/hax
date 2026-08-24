@@ -146,8 +146,8 @@ static void test_reasoning_details_supersede_text(void)
 {
     struct item items[] = {
         {.kind = ITEM_REASONING,
-         .reasoning_text = "thinking",
          .reasoning_json = "[{\"type\":\"reasoning.text\",\"text\":\"thinking\"}]",
+         .reasoning_text = "thinking",
          .provider = "openrouter",
          .model = "m1"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "Done."},

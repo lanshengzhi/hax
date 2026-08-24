@@ -431,7 +431,7 @@ static void collect_skills(struct skill_entry **out, size_t *n, size_t *cap, con
 
         if (*n == *cap) {
             size_t c = *cap ? *cap * 2 : 8;
-            *out = (skill_entry*)xrealloc(*out, c * sizeof(**out));
+            *out = (skill_entry *)xrealloc(*out, c * sizeof(**out));
             *cap = c;
         }
         (*out)[*n].dir = dir_clean;

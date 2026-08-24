@@ -164,13 +164,13 @@ static const char BASH_DESCRIPTION[] =
     "orphaned by an exited shell are killed.";
 
 static const struct tool_param BASH_PARAMS[] = {
-    {.name = "command", .type = "string", .required = 1, .description = "Shell command to run."},
+    {.name = "command", .type = "string", .description = "Shell command to run.", .required = 1},
     {.name = "timeout_seconds",
      .type = "integer",
-     .minimum = 1,
      .description = "Optional override of the default timeout; rarely needed — on expiry the "
                     "command detaches into a background task instead of dying. The harness "
-                    "clamps to a configured maximum."},
+                    "clamps to a configured maximum.",
+     .minimum = 1},
     {.name = "background",
      .type = "boolean",
      .description = "Run as a background task: return after a brief initial-output window while "
@@ -194,12 +194,12 @@ static const char BASH_DESCRIPTION_NO_TASKS[] =
     "The harness enforces a hard ceiling.";
 
 static const struct tool_param BASH_PARAMS_NO_TASKS[] = {
-    {.name = "command", .type = "string", .required = 1, .description = "Shell command to run."},
+    {.name = "command", .type = "string", .description = "Shell command to run.", .required = 1},
     {.name = "timeout_seconds",
      .type = "integer",
-     .minimum = 1,
      .description = "Optional override of the default timeout. Use a higher value for slow builds "
-                    "or test suites; the harness clamps to a configured maximum."},
+                    "or test suites; the harness clamps to a configured maximum.",
+     .minimum = 1},
 };
 
 static const struct tool_def BASH_DEF_NO_TASKS = {

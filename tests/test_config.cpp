@@ -1512,11 +1512,11 @@ static void test_preset_save(void)
     snprintf(precfg, sizeof precfg, "%s/hax/config.json", dir);
     write_file(precfg, "{\"model\": \"keep-me\"}");
     config_init();
-    struct config_preset def = {.provider = "mock",
+    struct config_preset def = {.description = "saved from the session",
+                                .tint = "rose",
+                                .provider = "mock",
                                 .model = "m",
                                 .effort = "high",
-                                .tint = "rose",
-                                .description = "saved from the session",
                                 .system_prompt_append = "be terse"};
     char *err = NULL;
     EXPECT(config_preset_save("scout", &def, &err) == 0);
@@ -1596,7 +1596,7 @@ static void test_preset_save_errors(void)
     err = NULL;
     EXPECT(!config_preset_exists("anon"));
 
-    struct config_preset badtint = {.provider = "mock", .tint = "chartreuse"};
+    struct config_preset badtint = {.tint = "chartreuse", .provider = "mock"};
     EXPECT(config_preset_save("hue", &badtint, &err) == -1);
     EXPECT(err != NULL);
     free(err);

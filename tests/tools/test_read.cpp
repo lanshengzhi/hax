@@ -521,7 +521,7 @@ static void test_read_bounded_slice_suppresses_truncation_marker(void)
         size_t len;
     } doc;
     doc.len = n_lines * 4; /* "ln_\n" pattern, ~400KB > READ_CAP */
-    doc.buf = (char*)xmalloc(doc.len);
+    doc.buf = (char *)xmalloc(doc.len);
     for (size_t i = 0; i < n_lines; i++) {
         doc.buf[i * 4 + 0] = 'l';
         doc.buf[i * 4 + 1] = 'n';

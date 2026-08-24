@@ -100,14 +100,16 @@ static void emit_text(stream_cb cb, void *user, const char *text)
 
 static void emit_done(stream_cb cb, void *user, long input_tokens)
 {
-    struct stream_event ev = {.kind = EV_DONE, .u = {.done = {.usage = usage_tokens(input_tokens, 10)}}};
+    struct stream_event ev = {.kind = EV_DONE,
+                              .u = {.done = {.usage = usage_tokens(input_tokens, 10)}}};
     cb(&ev, user);
 }
 
 static void emit_error(stream_cb cb, void *user, const char *message,
                        const struct stream_usage *usage)
 {
-    struct stream_event ev = {.kind = EV_ERROR, .u = {.error = {.message = message, .usage = usage}}};
+    struct stream_event ev = {.kind = EV_ERROR,
+                              .u = {.error = {.message = message, .usage = usage}}};
     cb(&ev, user);
 }
 

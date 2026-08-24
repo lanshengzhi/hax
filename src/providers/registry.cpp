@@ -75,7 +75,8 @@ const struct provider_factory *const *provider_all(size_t *out_count)
     if (!initialized) {
         size_t config_count;
         const struct provider_factory *const *config_factories = config_providers(&config_count);
-        factories = (const provider_factory**)xcalloc(N_BUILTINS + config_count, sizeof(*factories));
+        factories =
+            (const provider_factory **)xcalloc(N_BUILTINS + config_count, sizeof(*factories));
         for (size_t i = 0; i < N_BUILTINS; i++)
             if (!BUILTINS[i]->internal)
                 factories[factory_count++] = BUILTINS[i];

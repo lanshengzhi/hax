@@ -391,7 +391,8 @@ static void test_retry_discards_partial_attempt(void)
     feed_reasoning(&t, "half a thought");
     feed_text(&t, "half an answer");
     feed_tool_start(&t, "c1", "read");
-    struct stream_event retry = {.kind = EV_RETRY, .u = {.retry = {.attempt = 1, .max_attempts = 5}}};
+    struct stream_event retry = {.kind = EV_RETRY,
+                                 .u = {.retry = {.attempt = 1, .max_attempts = 5}}};
     turn_consume(&t, &retry);
 
     EXPECT(t.n_items == 0);

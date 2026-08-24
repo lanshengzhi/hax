@@ -287,13 +287,14 @@ static void print_account_credits(const char *body)
 
     json_t *root = json_loads(body, 0, NULL);
     json_t *data = root ? json_object_get(root, "data") : NULL;
+    double remaining = 0;
     json_t *total = json_is_object(data) ? json_object_get(data, "total_credits") : NULL;
     json_t *spent = json_is_object(data) ? json_object_get(data, "total_usage") : NULL;
     /* Zero credits denotes a free or BYOK account, not an exhausted prepaid balance. */
     if (!json_is_number(total) || !json_is_number(spent) || json_number_value(total) <= 0)
         goto out;
 
-    double remaining = json_number_value(total) - json_number_value(spent);
+    remaining = json_number_value(total) - json_number_value(spent);
     if (remaining < 0)
         remaining = 0;
 
@@ -324,6 +325,7 @@ static int openrouter_query_usage(struct provider *provider)
     free(authorization);
     char *key_body = NULL, *credits_body = NULL;
     json_t *root = NULL;
+    json_t *data = NULL;
     int result = -1;
     long status = 0;
 
@@ -353,7 +355,7 @@ static int openrouter_query_usage(struct provider *provider)
         goto out;
     }
 
-    json_t *data = json_object_get(root, "data");
+    data = json_object_get(root, "data");
     if (!json_is_object(data)) {
         ui_error("unrecognized usage response shape (no data object)");
         goto out;

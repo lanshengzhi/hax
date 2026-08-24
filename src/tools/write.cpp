@@ -32,6 +32,10 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
 
     char *result = NULL;
     char *path = NULL;
+    char *error = NULL;
+    int created = 0;
+    const char *content = NULL;
+    size_t content_len = 0;
     const char *raw_path = json_string_value(json_object_get(root, "path"));
     json_t *content_json = json_object_get(root, "content");
     if (!raw_path || !*raw_path) {
@@ -44,11 +48,9 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
     }
 
     path = path_expand_home(raw_path);
-    const char *content = json_string_value(content_json);
-    size_t content_len = json_string_length(content_json);
+    content = json_string_value(content_json);
+    content_len = json_string_length(content_json);
 
-    char *error = NULL;
-    int created = 0;
     result = fs_write_with_diff(path, content, content_len, &error, &created);
     if (error) {
         free(result);
@@ -85,11 +87,11 @@ static const char WRITE_DESCRIPTION[] =
     "automatically.";
 
 static const struct tool_param WRITE_PARAMS[] = {
-    {.name = "path", .type = "string", .required = 1, .description = "Path to the file."},
+    {.name = "path", .type = "string", .description = "Path to the file.", .required = 1},
     {.name = "content",
      .type = "string",
-     .required = 1,
-     .description = "Full new contents of the file."},
+     .description = "Full new contents of the file.",
+     .required = 1},
 };
 
 const struct tool TOOL_WRITE = {

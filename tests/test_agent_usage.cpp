@@ -305,12 +305,13 @@ static void test_usage_add_drops_cost_over_unpriced_tokens(void)
 {
     /* Token-only extra: the exact cost no longer covers the aggregate's tokens. */
     struct stream_usage sum = usage(100, 20, -1, 0.5);
-    agent_usage_add(&sum, &(struct stream_usage){.input_tokens = 40,
-                                                 .output_tokens = -1,
-                                                 .cached_tokens = -1,
-                                                 .cache_write_tokens = -1,
-                                                 .cache_write_1h_tokens = -1,
-                                                 .cost = -1});
+    const struct stream_usage token_only = {.input_tokens = 40,
+                                            .output_tokens = -1,
+                                            .cached_tokens = -1,
+                                            .cache_write_tokens = -1,
+                                            .cache_write_1h_tokens = -1,
+                                            .cost = -1};
+    agent_usage_add(&sum, &token_only);
     EXPECT(sum.input_tokens == 140);
     EXPECT(sum.cost < 0);
 

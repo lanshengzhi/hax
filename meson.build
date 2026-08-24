@@ -72,7 +72,7 @@ version_h = vcs_tag(
 )
 
 # Production sources, grouped by subdirectory and sorted within each group.
-# `main.c` is deliberately excluded: it lives only in the `hax` executable so
+# `main.cpp` is deliberately excluded: it lives only in the `hax` executable so
 # that test binaries (which bring their own `main`) can link the same objects
 # via `hax_lib` without colliding. Keep these lists sorted — additions should
 # slot into the right group alphabetically.
@@ -211,7 +211,7 @@ hax_lib = static_library('hax_lib',
 
 # Wrap the library as a dependency so consumers inherit both the link against
 # `hax_lib` and the include dirs / compile flags of libcurl / jansson / threads
-# — their own translation units (`main.c`, each test) include <jansson.h> etc.
+# — their own translation units (`main.cpp`, each test) include <jansson.h> etc.
 # and need those paths at compile time, which `link_with` alone wouldn't carry.
 # Only the compile-side of each dependency is propagated here via
 # partial_dependency(): the link args already ride along through `link_with`

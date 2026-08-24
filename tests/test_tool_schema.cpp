@@ -19,7 +19,7 @@ static void test_empty_def_yields_object_schema(void)
 static void test_primitive_params(void)
 {
     static const struct tool_param params[] = {
-        {.name = "command", .type = "string", .required = 1, .description = "Shell command."},
+        {.name = "command", .type = "string", .description = "Shell command.", .required = 1},
         {.name = "timeout_seconds", .type = "integer", .minimum = 1},
     };
     struct tool_def def = {.name = "bash", .params = params, .n_params = 2};

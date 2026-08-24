@@ -36,12 +36,12 @@ static void append_output(struct fixture *f, const char *bytes, size_t n, int is
 
 static void emit_direct(const char *bytes, size_t n, int is_raw, void *user)
 {
-    append_output((fixture*)user, bytes, n, is_raw);
+    append_output((fixture *)user, bytes, n, is_raw);
 }
 
 static void emit_text(void *user, const char *s, size_t n)
 {
-    append_output((fixture*)user, s, n, 0);
+    append_output((fixture *)user, s, n, 0);
 }
 
 static void emit_raw(void *user, const char *s, size_t n)
