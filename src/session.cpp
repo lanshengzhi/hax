@@ -35,16 +35,6 @@
 #define ST_MTIME_NSEC(st) ((long)(st).st_mtim.tv_nsec)
 #endif
 
-/* These helpers serialize session control records, not conversation items. */
-static void json_set_optional_string(json_t *object, const char *key, const char *value)
-{
-    if (!value)
-        return;
-    json_t *string = json_string(value);
-    if (string)
-        json_object_set_new(object, key, string);
-}
-
 /* Unknown origins remain ordinary items; treating them as synthetic could hide a typed prompt. */
 static const struct {
     enum item_origin origin;
@@ -389,32 +379,39 @@ static int write_text_line(FILE *file, std::string_view text)
                                                                                                 : 0;
 }
 
+static int write_control_line(FILE *file, const struct session_control_input *input)
+{
+    std::string encoded;
+    if (session_control_encode(input, &encoded) < 0)
+        return -1;
+    return write_text_line(file, encoded);
+}
+
 static int write_header(struct session_log *log)
 {
-    json_t *header = json_object();
-    json_object_set_new(header, "type", json_string("session"));
-    json_object_set_new(header, "version", json_integer(SESSION_FORMAT_VERSION));
-    json_object_set_new(header, "hax_version", json_string(HAX_VERSION));
-    json_set_optional_string(header, "id", log->id);
-    json_set_optional_string(header, "timestamp", log->timestamp);
-    json_set_optional_string(header, "cwd", log->cwd);
-    json_set_optional_string(header, "provider", log->provider);
-    json_set_optional_string(header, "model", log->model);
-    json_set_optional_string(header, "model_label", differing_model_label(log));
-    json_set_optional_string(header, "effort", log->effort);
-    json_set_optional_string(header, "preset", log->preset);
-
     /* Probed at materialization rather than at open: the position recorded is the one the
      * conversation actually started from, and runs that never send a message pay nothing. */
     struct git_state git;
     git_state_probe(&git);
-    json_set_optional_string(header, "git_branch", git.branch);
-    json_set_optional_string(header, "git_commit", git.commit);
-    json_set_optional_string(header, "git_subject", git.subject);
+    const struct session_control_input header = {
+        .kind = SESSION_CONTROL_HEADER,
+        .has_version = 1,
+        .version = SESSION_FORMAT_VERSION,
+        .hax_version = HAX_VERSION,
+        .id = log->id,
+        .timestamp = log->timestamp,
+        .cwd = log->cwd,
+        .provider = log->provider,
+        .model = log->model,
+        .model_label = differing_model_label(log),
+        .effort = log->effort,
+        .preset = log->preset,
+        .git_branch = git.branch,
+        .git_commit = git.commit,
+        .git_subject = git.subject,
+    };
+    int result = write_control_line(log->file, &header);
     git_state_free(&git);
-
-    int result = write_json_line(log->file, header);
-    json_decref(header);
     return result;
 }
 
@@ -430,16 +427,15 @@ static int optional_strings_equal(const char *a, const char *b)
 
 static int write_selection(struct session_log *log)
 {
-    json_t *selection = json_object();
-    json_object_set_new(selection, "type", json_string("selection"));
-    json_set_optional_string(selection, "provider", log->provider);
-    json_set_optional_string(selection, "model", log->model);
-    json_set_optional_string(selection, "model_label", differing_model_label(log));
-    json_set_optional_string(selection, "effort", log->effort);
-    json_set_optional_string(selection, "preset", log->preset);
-    int result = write_json_line(log->file, selection);
-    json_decref(selection);
-    return result;
+    const struct session_control_input selection = {
+        .kind = SESSION_CONTROL_SELECTION,
+        .provider = log->provider,
+        .model = log->model,
+        .model_label = differing_model_label(log),
+        .effort = log->effort,
+        .preset = log->preset,
+    };
+    return write_control_line(log->file, &selection);
 }
 
 static int selection_matches_log(const struct session_meta *meta, const struct session_log *log)
@@ -923,21 +919,25 @@ int session_load(const char *path, struct item **out_items, size_t *out_count,
 
     while (getline(&line, &line_capacity, file) >= 0) {
         struct session_control control;
-        if (session_control_decode(line, &control) == SESSION_CONTROL_DECODED) {
-            if (control.kind == SESSION_CONTROL_HEADER) {
-                if (!header_provider && control.provider)
-                    header_provider = xstrdup(control.provider);
-                if (!header_model && control.model)
-                    header_model = xstrdup(control.model);
-                if (out_meta) {
-                    free(out_meta->id);
-                    out_meta->id = control.id ? xstrdup(control.id) : NULL;
-                    free(out_meta->cwd);
-                    out_meta->cwd = control.cwd ? xstrdup(control.cwd) : NULL;
+        const enum session_control_decode_result control_result =
+            session_control_decode(line, &control);
+        if (control_result != SESSION_CONTROL_NOT_FOUND) {
+            if (control_result == SESSION_CONTROL_DECODED) {
+                if (control.kind == SESSION_CONTROL_HEADER) {
+                    if (!header_provider && control.provider)
+                        header_provider = xstrdup(control.provider);
+                    if (!header_model && control.model)
+                        header_model = xstrdup(control.model);
+                    if (out_meta) {
+                        free(out_meta->id);
+                        out_meta->id = control.id ? xstrdup(control.id) : NULL;
+                        free(out_meta->cwd);
+                        out_meta->cwd = control.cwd ? xstrdup(control.cwd) : NULL;
+                        apply_selection_record(out_meta, &control);
+                    }
+                } else if (out_meta) {
                     apply_selection_record(out_meta, &control);
                 }
-            } else if (out_meta) {
-                apply_selection_record(out_meta, &control);
             }
             session_control_free(&control);
             continue;
@@ -1020,29 +1020,26 @@ void session_label_read(const char *path, int max_cells, struct session_label *o
             continue;
         }
 
-        json_t *object = json_loads(line, 0, NULL);
-        if (!object)
+        struct item item;
+        if (session_item_decode(line, &item) < 0)
             continue;
-
-        const char *kind = json_string_value(json_object_get(object, "kind"));
-        if (kind && strcmp(kind, "user") == 0) {
-            enum item_origin origin = json_get_item_origin(object);
-            if (origin != ITEM_ORIGIN_NONE) {
-                if (origin == ITEM_ORIGIN_COMPACT_SEED)
-                    saw_compaction_seed = 1;
-                json_decref(object);
-                continue;
-            }
-            const char *text = json_string_value(json_object_get(object, "text"));
-            if (text) {
-                char *flattened = flatten_for_display(text);
-                out->prompt = truncate_for_display(flattened, (size_t)max_cells);
-                free(flattened);
-            }
-            json_decref(object);
-            break;
+        if (item.kind != ITEM_USER_MESSAGE) {
+            item_free(&item);
+            continue;
         }
-        json_decref(object);
+        if (item.origin != ITEM_ORIGIN_NONE) {
+            if (item.origin == ITEM_ORIGIN_COMPACT_SEED)
+                saw_compaction_seed = 1;
+            item_free(&item);
+            continue;
+        }
+        if (item.text) {
+            char *flattened = flatten_for_display(item.text);
+            out->prompt = truncate_for_display(flattened, (size_t)max_cells);
+            free(flattened);
+        }
+        item_free(&item);
+        break;
     }
     free(data);
     if (!out->prompt && saw_compaction_seed)

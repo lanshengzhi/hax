@@ -2,6 +2,7 @@
 #ifndef HAX_SESSION_CONTROL_H
 #define HAX_SESSION_CONTROL_H
 
+#include <string>
 #include <string_view>
 
 /* Session control records are append-only snapshots. The adapter accepts only the two control
@@ -38,6 +39,31 @@ struct session_control {
     char *git_subject;
     char *forked_from;
 };
+
+/* Borrowed control fields for encoding one append-only record. The encoder never retains or frees
+ * these values. Header-only fields are ignored for selections. */
+struct session_control_input {
+    enum session_control_kind kind;
+    int has_version;
+    long version;
+    const char *hax_version;
+    const char *id;
+    const char *timestamp;
+    const char *cwd;
+    const char *provider;
+    const char *model;
+    const char *model_label;
+    const char *effort;
+    const char *preset;
+    const char *git_branch;
+    const char *git_commit;
+    const char *git_subject;
+    const char *forked_from;
+};
+
+/* Encode borrowed project-owned fields as one compact JSON document. Returns zero on success or -1
+ * when the record kind or a wire value cannot be encoded. */
+int session_control_encode(const struct session_control_input *input, std::string *out);
 
 /* Zeroes the output and decodes one complete JSONL record. Unknown fields are accepted for
  * forward-compatible control records; malformed, unknown, or non-control records are not decoded.

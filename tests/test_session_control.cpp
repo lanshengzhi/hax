@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: MIT */
+#include <string>
+
 #include "harness.h"
 #include "session_control.h"
 
@@ -70,6 +72,44 @@ static void test_escaped_type_key_fixture(void)
     session_control_free(&control);
 }
 
+static void test_encode_fixtures(void)
+{
+    const struct session_control_input header = {
+        .kind = SESSION_CONTROL_HEADER,
+        .has_version = 1,
+        .version = 1,
+        .hax_version = "v0.4.0",
+        .id = "session-id",
+        .timestamp = "2026-08-25T00:00:00Z",
+        .cwd = "/work/project",
+        .provider = "alpha",
+        .model = "model-id",
+        .model_label = "Model label",
+        .effort = "high",
+        .preset = "review",
+        .git_branch = "modern-cpp",
+        .git_commit = "abc123",
+        .git_subject = "Migrate records",
+        .forked_from = "parent-id",
+    };
+    std::string encoded;
+    EXPECT(session_control_encode(&header, &encoded) == 0);
+    EXPECT(
+        encoded ==
+        R"({"type":"session","version":1,"hax_version":"v0.4.0","id":"session-id","timestamp":"2026-08-25T00:00:00Z","cwd":"/work/project","provider":"alpha","model":"model-id","model_label":"Model label","effort":"high","preset":"review","git_branch":"modern-cpp","git_commit":"abc123","git_subject":"Migrate records","forked_from":"parent-id"})");
+
+    const struct session_control_input selection = {
+        .kind = SESSION_CONTROL_SELECTION,
+        .provider = "beta",
+        .model = "next-model",
+        .model_label = "Next label",
+    };
+    EXPECT(session_control_encode(&selection, &encoded) == 0);
+    EXPECT(
+        encoded ==
+        R"({"type":"selection","provider":"beta","model":"next-model","model_label":"Next label"})");
+}
+
 static void test_selection_fixture_and_absence(void)
 {
     const char *fixture =
@@ -107,6 +147,7 @@ int main(void)
     test_header_fixture();
     test_old_header_fixture();
     test_escaped_type_key_fixture();
+    test_encode_fixtures();
     test_selection_fixture_and_absence();
     test_non_control_and_invalid_records();
     T_REPORT();

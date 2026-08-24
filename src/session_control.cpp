@@ -3,11 +3,14 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "json.h"
 #include "util.h"
+#include "text/utf8.h"
 
 namespace hax::session_control_detail
 {
@@ -206,6 +209,48 @@ static bool normalize_control_keys(std::string_view input, std::string *normaliz
     return true;
 }
 
+static void set_optional_string(std::optional<std::string> &destination, const char *value)
+{
+    /* Invalid optional UTF-8 is omitted rather than failing the log. */
+    if (value && utf8_is_valid(value, strlen(value)))
+        destination = value;
+}
+
+static int control_to_wire(const struct session_control_input &source, wire_control *destination)
+{
+    switch (source.kind) {
+    case SESSION_CONTROL_HEADER:
+        destination->type = wire_kind::session;
+        break;
+    case SESSION_CONTROL_SELECTION:
+        destination->type = wire_kind::selection;
+        break;
+    default:
+        return -1;
+    }
+
+    if (source.kind == SESSION_CONTROL_HEADER) {
+        if (source.has_version)
+            destination->version = source.version;
+        set_optional_string(destination->hax_version, source.hax_version);
+        set_optional_string(destination->id, source.id);
+        set_optional_string(destination->timestamp, source.timestamp);
+        set_optional_string(destination->cwd, source.cwd);
+    }
+    set_optional_string(destination->provider, source.provider);
+    set_optional_string(destination->model, source.model);
+    set_optional_string(destination->model_label, source.model_label);
+    set_optional_string(destination->effort, source.effort);
+    set_optional_string(destination->preset, source.preset);
+    if (source.kind == SESSION_CONTROL_HEADER) {
+        set_optional_string(destination->git_branch, source.git_branch);
+        set_optional_string(destination->git_commit, source.git_commit);
+        set_optional_string(destination->git_subject, source.git_subject);
+        set_optional_string(destination->forked_from, source.forked_from);
+    }
+    return 0;
+}
+
 static char *duplicate_optional_string(const std::optional<std::string> &value)
 {
     return value ? xstrdup(value->c_str()) : NULL;
@@ -234,6 +279,22 @@ static void copy_wire_control(const wire_control &source, struct session_control
 }
 
 } // namespace
+
+int session_control_encode(const struct session_control_input *input, std::string *out)
+{
+    if (!input || !out)
+        return -1;
+
+    wire_control value;
+    if (control_to_wire(*input, &value) < 0)
+        return -1;
+
+    auto encoded = hax::json::serialize(value, {.source = "session control"});
+    if (!encoded)
+        return -1;
+    *out = std::move(*encoded);
+    return 0;
+}
 
 enum session_control_decode_result session_control_decode(std::string_view input,
                                                           struct session_control *out)

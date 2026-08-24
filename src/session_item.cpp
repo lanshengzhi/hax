@@ -76,6 +76,48 @@ struct wire_item {
     std::optional<std::vector<glz::raw_json>> images;
 };
 
+/* Legacy readers ignored an optional field when its JSON shape was wrong. Raw values let the
+ * decoder retain that tolerance while each accepted value still crosses a typed Glaze DTO. */
+struct wire_usage_raw {
+    std::optional<glz::raw_json> input;
+    std::optional<glz::raw_json> output;
+    std::optional<glz::raw_json> cached;
+    std::optional<glz::raw_json> cache_write;
+    std::optional<glz::raw_json> cache_write_1h;
+    std::optional<glz::raw_json> cost;
+    std::optional<glz::raw_json> elapsed_ms;
+    std::optional<glz::raw_json> in_tokens;
+    std::optional<glz::raw_json> cost_in;
+    std::optional<glz::raw_json> cost_cache_read;
+    std::optional<glz::raw_json> cost_cache_write;
+    std::optional<glz::raw_json> cost_out;
+    std::optional<glz::raw_json> cost_total;
+    std::optional<glz::raw_json> cost_estimated;
+    std::optional<glz::raw_json> provider_label;
+    std::optional<glz::raw_json> model_label;
+    std::optional<glz::raw_json> effort;
+    std::optional<glz::raw_json> served_model;
+    std::optional<glz::raw_json> route;
+    std::optional<glz::raw_json> response_id;
+};
+
+struct wire_item_raw {
+    std::optional<glz::raw_json> kind;
+    std::optional<glz::raw_json> text;
+    std::optional<glz::raw_json> call_id;
+    std::optional<glz::raw_json> tool_name;
+    std::optional<glz::raw_json> arguments;
+    std::optional<glz::raw_json> output;
+    std::optional<glz::raw_json> output_hidden_tail;
+    std::optional<glz::raw_json> reasoning_json;
+    std::optional<glz::raw_json> reasoning_text;
+    std::optional<glz::raw_json> provider;
+    std::optional<glz::raw_json> model;
+    std::optional<glz::raw_json> origin;
+    std::optional<glz::raw_json> usage;
+    std::optional<glz::raw_json> images;
+};
+
 } // namespace hax::session_item_detail
 
 template <> struct glz::meta<hax::session_item_detail::wire_kind> {
@@ -113,13 +155,49 @@ template <> struct glz::meta<hax::session_item_detail::wire_item> {
         "usage", &T::usage, "images", &T::images);
 };
 
+template <> struct glz::meta<hax::session_item_detail::wire_usage_raw> {
+    using T = hax::session_item_detail::wire_usage_raw;
+    static constexpr auto value = glz::object(
+        "input", &T::input, "output", &T::output, "cached", &T::cached, "cache_write",
+        &T::cache_write, "cache_write_1h", &T::cache_write_1h, "cost", &T::cost, "elapsed_ms",
+        &T::elapsed_ms, "in_tokens", &T::in_tokens, "cost_in", &T::cost_in, "cost_cache_read",
+        &T::cost_cache_read, "cost_cache_write", &T::cost_cache_write, "cost_out", &T::cost_out,
+        "cost_total", &T::cost_total, "cost_estimated", &T::cost_estimated, "provider_label",
+        &T::provider_label, "model_label", &T::model_label, "effort", &T::effort, "served_model",
+        &T::served_model, "route", &T::route, "response_id", &T::response_id);
+};
+
+template <> struct glz::meta<hax::session_item_detail::wire_item_raw> {
+    using T = hax::session_item_detail::wire_item_raw;
+    static constexpr auto value = glz::object(
+        "kind", &T::kind, "text", &T::text, "call_id", &T::call_id, "tool_name", &T::tool_name,
+        "arguments", &T::arguments, "output", &T::output, "output_hidden_tail",
+        &T::output_hidden_tail, "reasoning_json", &T::reasoning_json, "reasoning_text",
+        &T::reasoning_text, "provider", &T::provider, "model", &T::model, "origin", &T::origin,
+        "usage", &T::usage, "images", &T::images);
+};
+
 namespace
 {
 
 using hax::session_item_detail::wire_image;
 using hax::session_item_detail::wire_item;
+using hax::session_item_detail::wire_item_raw;
 using hax::session_item_detail::wire_kind;
 using hax::session_item_detail::wire_usage;
+using hax::session_item_detail::wire_usage_raw;
+
+template <typename T> static std::optional<T> decode_raw(const std::optional<glz::raw_json> &source)
+{
+    if (!source)
+        return std::nullopt;
+    auto decoded = hax::json::parse<T>(
+        source->str,
+        {.source = "session item field", .max_input_bytes = 0, .allow_unknown_keys = true});
+    if (!decoded)
+        return std::nullopt;
+    return std::move(*decoded);
+}
 
 template <typename T> static void set_optional(std::optional<T> &destination, const T &value)
 {
@@ -287,6 +365,32 @@ static double real_or_negative(const std::optional<double> &value)
     return value ? *value : -1;
 }
 
+static wire_usage usage_from_raw(const wire_usage_raw &source)
+{
+    wire_usage destination;
+    destination.input = decode_raw<long>(source.input);
+    destination.output = decode_raw<long>(source.output);
+    destination.cached = decode_raw<long>(source.cached);
+    destination.cache_write = decode_raw<long>(source.cache_write);
+    destination.cache_write_1h = decode_raw<long>(source.cache_write_1h);
+    destination.cost = decode_raw<double>(source.cost);
+    destination.elapsed_ms = decode_raw<long>(source.elapsed_ms);
+    destination.in_tokens = decode_raw<long>(source.in_tokens);
+    destination.cost_in = decode_raw<double>(source.cost_in);
+    destination.cost_cache_read = decode_raw<double>(source.cost_cache_read);
+    destination.cost_cache_write = decode_raw<double>(source.cost_cache_write);
+    destination.cost_out = decode_raw<double>(source.cost_out);
+    destination.cost_total = decode_raw<double>(source.cost_total);
+    destination.cost_estimated = decode_raw<bool>(source.cost_estimated);
+    destination.provider_label = decode_raw<std::string>(source.provider_label);
+    destination.model_label = decode_raw<std::string>(source.model_label);
+    destination.effort = decode_raw<std::string>(source.effort);
+    destination.served_model = decode_raw<std::string>(source.served_model);
+    destination.route = decode_raw<std::string>(source.route);
+    destination.response_id = decode_raw<std::string>(source.response_id);
+    return destination;
+}
+
 static struct turn_usage *usage_from_wire(const wire_usage &source)
 {
     struct turn_usage *destination = (struct turn_usage *)xmalloc(sizeof(*destination));
@@ -359,29 +463,38 @@ static void images_from_wire(const std::optional<std::vector<glz::raw_json>> &so
     }
 }
 
-static int item_from_wire(const wire_item &source, struct item *destination)
+static int item_from_raw(const wire_item_raw &source, struct item *destination)
 {
-    if (!source.kind)
+    const auto kind = decode_raw<wire_kind>(source.kind);
+    if (!kind)
         return -1;
 
     struct item result = {};
-    result.kind = wire_kind_to_item(*source.kind);
-    result.text = duplicate_optional_string(source.text);
-    result.call_id = duplicate_optional_string(source.call_id);
-    result.tool_name = duplicate_optional_string(source.tool_name);
-    result.tool_arguments_json = duplicate_optional_string(source.arguments);
-    result.output = duplicate_optional_string(source.output);
-    if (source.output_hidden_tail && *source.output_hidden_tail > 0)
-        result.output_hidden_tail = static_cast<size_t>(*source.output_hidden_tail);
-    result.reasoning_json = duplicate_optional_string(source.reasoning_json);
-    result.reasoning_text = duplicate_optional_string(source.reasoning_text);
-    result.provider = duplicate_optional_string(source.provider);
-    result.model = duplicate_optional_string(source.model);
-    result.origin = origin_from_wire(source.origin);
-    if (result.kind == ITEM_TURN_USAGE && source.usage)
-        result.usage = usage_from_wire(*source.usage);
-    images_from_wire(source.images, &result);
+    result.kind = wire_kind_to_item(*kind);
+    result.text = duplicate_optional_string(decode_raw<std::string>(source.text));
+    result.call_id = duplicate_optional_string(decode_raw<std::string>(source.call_id));
+    result.tool_name = duplicate_optional_string(decode_raw<std::string>(source.tool_name));
+    result.tool_arguments_json =
+        duplicate_optional_string(decode_raw<std::string>(source.arguments));
+    result.output = duplicate_optional_string(decode_raw<std::string>(source.output));
+    const auto hidden_tail = decode_raw<long long>(source.output_hidden_tail);
+    if (hidden_tail && *hidden_tail > 0)
+        result.output_hidden_tail = static_cast<size_t>(*hidden_tail);
+    result.reasoning_json =
+        duplicate_optional_string(decode_raw<std::string>(source.reasoning_json));
+    result.reasoning_text =
+        duplicate_optional_string(decode_raw<std::string>(source.reasoning_text));
+    result.provider = duplicate_optional_string(decode_raw<std::string>(source.provider));
+    result.model = duplicate_optional_string(decode_raw<std::string>(source.model));
+    result.origin = origin_from_wire(decode_raw<std::string>(source.origin));
 
+    if (result.kind == ITEM_TURN_USAGE) {
+        const auto usage = decode_raw<wire_usage_raw>(source.usage);
+        if (usage)
+            result.usage = usage_from_wire(usage_from_raw(*usage));
+    }
+
+    images_from_wire(decode_raw<std::vector<glz::raw_json>>(source.images), &result);
     *destination = result;
     return 0;
 }
@@ -410,13 +523,13 @@ int session_item_decode(std::string_view input, struct item *out)
         return -1;
     memset(out, 0, sizeof(*out));
 
-    auto decoded = hax::json::parse<wire_item>(
+    auto decoded = hax::json::parse<wire_item_raw>(
         input, {.source = "session item", .max_input_bytes = 0, .allow_unknown_keys = true});
     if (!decoded)
         return -1;
 
     struct item result = {};
-    if (item_from_wire(*decoded, &result) < 0)
+    if (item_from_raw(*decoded, &result) < 0)
         return -1;
     *out = result;
     return 0;

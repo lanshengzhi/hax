@@ -489,6 +489,93 @@ static void test_control_fixture_readers(void)
     free(path);
 }
 
+static void test_session_load_legacy_and_malformed_lines(void)
+{
+    const char *contents =
+        R"({"type":"session","version":1,"id":"legacy-id","cwd":"/legacy","provider":"old-provider","model":"old-model","effort":"high","preset":"legacy"})"
+        "\n"
+        R"({"kind":"user","text":"first"})"
+        "\n"
+        R"({"kind":"reasoning","reasoning_text":"legacy thought"})"
+        "\n"
+        R"({"kind":"turn_usage","usage":{"input":100,"cached":20,"cache_write":10}})"
+        "\n"
+        R"({"kind":"tool_call","call_id":"dangling","tool_name":"bash","arguments":"{}"})"
+        "\n"
+        R"({"kind":"tool_result","call_id":"done","output":"kept","images":[{"mime":"image/png","data":"AQ==","width":2,"height":3},42,{"mime":"image/png"}]})"
+        "\n"
+        R"({"kind":"tool_result","output":"shape survives","images":{}})"
+        "\n"
+        R"({"type":"selection","provider":"new-provider","model":"new-model"})"
+        "\n"
+        R"({"type":"selection","provider":7})"
+        "\n"
+        R"({"type":"selection","provider":7,"kind":"user","text":"not an item"})"
+        "\n"
+        R"({"kind":"user","text":7})"
+        "\n"
+        R"({"kind":"tool_result","output":})"
+        "\n"
+        R"({"kind":"assistant","text":"after"})"
+        "\n"
+        "{\"kind\":\"user\",\"text\":\"torn";
+    char *path = write_control_fixture(contents);
+
+    struct session_meta meta;
+    EXPECT(session_read_meta(path, &meta) == 0);
+    EXPECT_STR_EQ(meta.id, "legacy-id");
+    EXPECT_STR_EQ(meta.cwd, "/legacy");
+    EXPECT_STR_EQ(meta.provider, "new-provider");
+    EXPECT_STR_EQ(meta.model, "new-model");
+    EXPECT(meta.effort == NULL);
+    EXPECT(meta.preset == NULL);
+    session_meta_free(&meta);
+
+    struct item *items = NULL;
+    size_t item_count = 0;
+    EXPECT(session_load(path, &items, &item_count, &meta) == 0);
+    EXPECT(item_count == 7);
+    if (item_count == 7) {
+        EXPECT(items[0].kind == ITEM_USER_MESSAGE);
+        EXPECT_STR_EQ(items[0].text, "first");
+        EXPECT(items[1].kind == ITEM_REASONING);
+        EXPECT_STR_EQ(items[1].reasoning_text, "legacy thought");
+        EXPECT_STR_EQ(items[1].provider, "old-provider");
+        EXPECT_STR_EQ(items[1].model, "old-model");
+        EXPECT(items[2].kind == ITEM_TURN_USAGE && items[2].usage != NULL);
+        if (items[2].usage) {
+            EXPECT(items[2].usage->usage.input_tokens == 100);
+            EXPECT(items[2].usage->usage.cached_tokens == 20);
+            EXPECT(items[2].usage->usage.cache_write_tokens == 10);
+            EXPECT(items[2].usage->uncached_input_tokens == 70);
+        }
+        EXPECT(items[3].kind == ITEM_TOOL_RESULT);
+        EXPECT_STR_EQ(items[3].output, "kept");
+        EXPECT(items[3].n_images == 1);
+        if (items[3].n_images == 1) {
+            EXPECT_STR_EQ(items[3].images[0].mime, "image/png");
+            EXPECT_STR_EQ(items[3].images[0].data_b64, "AQ==");
+            EXPECT(items[3].images[0].width == 2 && items[3].images[0].height == 3);
+        }
+        EXPECT(items[4].kind == ITEM_TOOL_RESULT);
+        EXPECT_STR_EQ(items[4].output, "shape survives");
+        EXPECT(items[4].n_images == 0);
+        EXPECT(items[5].kind == ITEM_USER_MESSAGE);
+        EXPECT(items[5].text == NULL);
+        EXPECT(items[6].kind == ITEM_ASSISTANT_MESSAGE);
+        EXPECT_STR_EQ(items[6].text, "after");
+    }
+    EXPECT_STR_EQ(meta.id, "legacy-id");
+    EXPECT_STR_EQ(meta.cwd, "/legacy");
+    EXPECT_STR_EQ(meta.provider, "new-provider");
+    EXPECT_STR_EQ(meta.model, "new-model");
+    EXPECT(meta.effort == NULL);
+    EXPECT(meta.preset == NULL);
+    free_items(items, item_count);
+    session_meta_free(&meta);
+    free(path);
+}
+
 static void test_session_listing(void)
 {
     use_fresh_session_state();
@@ -1065,6 +1152,7 @@ int main(void)
     test_session_round_trip();
     test_reasoning_provenance_round_trip();
     test_control_fixture_readers();
+    test_session_load_legacy_and_malformed_lines();
     test_session_listing();
     test_session_file_permissions();
     test_resume_appends_only_new_items();
