@@ -179,3 +179,19 @@ Dependencies are declared in `meson.build`. Keep the footprint small; before add
 [`docs/philosophy.md`](docs/philosophy.md#small-dependency-footprint). Every new dependency must be
 in Debian main and either ship with macOS or be available via a single `brew install`. Do not add
 GPL libraries.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Uses a single-context layout with root `CONTEXT.md` and `docs/adr/`. See
+`docs/agents/domain.md`.
