@@ -1,0 +1,10 @@
+{"type":"session","version":1,"id":"legacy-records-id","cwd":"/legacy/records","provider":"legacy-provider","model":"legacy-model","unknown_header":true}
+{"kind":"reasoning","reasoning_json":"{\"opaque\":\"state\",\"nonce\":7}","reasoning_text":"opaque thought","unknown_reasoning":true}
+{"kind":"tool_result","call_id":"image","output":"image result\nmodel-only tail","output_hidden_tail":15,"origin":"summarized","images":[{"mime":"image/png","data":"AQ==","width":1,"height":1,"future_image":true}],"future_result":{"x":1}}
+{"kind":"user","text":"compacted","origin":"compact_seed"}
+{"kind":"user","text":"continue marker","origin":"continuation"}
+{"kind":"assistant","text":"interrupted answer","origin":"interrupted"}
+{"kind":"tool_result","call_id":"skipped","output":"[interrupted]","origin":"skipped"}
+{"kind":"tool_result","call_id":"refused","output":"[refused]","origin":"refused"}
+{"kind":"user","text":"task note","origin":"task_note"}
+{"kind":"assistant","text":"future origin","origin":"future"}

@@ -1,0 +1,11 @@
+# Continue a previously persisted conversation and use the saved file.
+reasoning resuming saved work
+text Inspecting the saved marker
+tool read {"path":"notes.txt"}
+usage in=45 out=11 cached=5 cost=0.05
+end-turn
+
+reasoning closing resumed work
+text Resumed conversation complete.
+usage in=30 out=8
+end-turn

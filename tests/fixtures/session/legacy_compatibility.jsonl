@@ -1,0 +1,17 @@
+{"type":"session","version":1,"hax_version":"v0.3.0","id":"legacy-header-id","timestamp":"2025-01-02T03:04:05Z","cwd":"/legacy/project","provider":"legacy-provider","model":"legacy-model","unknown_header":{"kept":true}}
+{"kind":"user","text":"legacy prompt","unknown_item":true}
+{"kind":"reasoning","reasoning_text":"inherited thought","unknown_reasoning":[1,2,3]}
+{"kind":"turn_usage","usage":{"input":100,"cached":20,"cache_write":10,"unknown_usage":true}}
+{"kind":"tool_call","call_id":"dangling","tool_name":"bash","arguments":"{}"}
+{"kind":"tool_call","call_id":"complete","tool_name":"write","arguments":"{\"path\":\"legacy.txt\"}"}
+{"kind":"tool_result","call_id":"complete","output":"legacy result","unknown_result":false}
+{"kind":"turn_boundary","future_boundary":true}
+{"kind":"assistant","text":"legacy answer"}
+{"type":"selection","provider":"old-provider","model":"old-model","effort":"high","preset":"old"}
+{"type":"selection","provider":"new-provider","model":"new-model","unknown_selection":42}
+{"kind":"user","text":7}
+{"kind":"future_item","text":"ignored"}
+{"type":"selection","provider":7}
+not-json
+{"kind":"tool_result","output":}
+{"kind":"assistant","text":"torn"

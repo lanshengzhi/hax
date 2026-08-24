@@ -37,6 +37,7 @@ test_sources = [
     'test_select_config.cpp',
     'test_select_model.cpp',
     'test_session.cpp',
+    'test_session_contract.cpp',
     'test_session_control.cpp',
     'test_session_prune.cpp',
     'test_slash.cpp',
@@ -123,6 +124,7 @@ test_sources = [
 ]
 
 fs = import('fs')
+session_fixture_dir = meson.project_source_root() / 'tests' / 'fixtures' / 'session'
 foreach src : test_sources
     stem = fs.stem(src).substring(5)  # drop the leading 'test_'
     parent = fs.parent(src)
@@ -131,7 +133,13 @@ foreach src : test_sources
         src,
         dependencies: [hax_dep],
     )
-    test(name, exe)
+    if name == 'session_contract'
+        test(name, exe,
+            env: {'HAX_SESSION_FIXTURES': session_fixture_dir},
+        )
+    else
+        test(name, exe)
+    endif
 endforeach
 
 # End-to-end scenarios: Python scripts under e2e/ that drive the built binary
@@ -141,6 +149,7 @@ endforeach
 e2e_scenarios = [
     'oneshot_text',
     'oneshot_tool',
+    'session_lifecycle',
 ]
 
 python = find_program('python3')

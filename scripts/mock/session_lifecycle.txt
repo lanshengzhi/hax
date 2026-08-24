@@ -1,0 +1,17 @@
+# Mixed conversation for the session lifecycle contract.
+reasoning planning write
+text Writing the lifecycle marker
+tool write {"path":"notes.txt","content":"saved before resume\n"}
+usage in=120 out=34 cached=20 cache_write=10 cache_write_1h=2 cost=0.125
+end-turn
+
+reasoning inspecting image
+text Reading the lifecycle image
+tool read {"path":"image.png"}
+usage in=80 out=25
+end-turn
+
+reasoning finalizing lifecycle
+text Lifecycle complete.
+usage in=60 out=12 cost=0.25
+end-turn
