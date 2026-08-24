@@ -17,6 +17,7 @@
 
 #include "config.h"
 #include "provider.h"
+#include "session_control.h"
 #include "session_item.h"
 #include "session_prune.h"
 #include "util.h"
@@ -42,12 +43,6 @@ static void json_set_optional_string(json_t *object, const char *key, const char
     json_t *string = json_string(value);
     if (string)
         json_object_set_new(object, key, string);
-}
-
-static char *json_dup_string(const json_t *object, const char *key)
-{
-    const char *value = json_string_value(json_object_get(object, key));
-    return value ? xstrdup(value) : NULL;
 }
 
 /* Unknown origins remain ordinary items; treating them as synthetic could hide a typed prompt. */
@@ -825,16 +820,16 @@ static void degrade_excess_images(struct item *items, size_t item_count)
 }
 
 /* Selection records are complete snapshots, so absent fields clear previous values. */
-static void apply_selection_record(struct session_meta *meta, const json_t *object)
+static void apply_selection_record(struct session_meta *meta, const struct session_control *control)
 {
     free(meta->provider);
-    meta->provider = json_dup_string(object, "provider");
+    meta->provider = control->provider ? xstrdup(control->provider) : NULL;
     free(meta->model);
-    meta->model = json_dup_string(object, "model");
+    meta->model = control->model ? xstrdup(control->model) : NULL;
     free(meta->effort);
-    meta->effort = json_dup_string(object, "effort");
+    meta->effort = control->effort ? xstrdup(control->effort) : NULL;
     free(meta->preset);
-    meta->preset = json_dup_string(object, "preset");
+    meta->preset = control->preset ? xstrdup(control->preset) : NULL;
 }
 
 static FILE *open_session_reader(const char *path)
@@ -862,23 +857,17 @@ int session_read_meta(const char *path, struct session_meta *out)
     char *line = NULL;
     size_t capacity = 0;
     while (getline(&line, &capacity, file) >= 0) {
-        /* Item records use "kind", so most large lines need no JSON parse. */
-        if (!strstr(line, "\"type\""))
+        struct session_control control;
+        if (session_control_decode(line, &control) != SESSION_CONTROL_DECODED)
             continue;
-        json_t *object = json_loads(line, 0, NULL);
-        if (!object)
-            continue;
-        const char *type = json_string_value(json_object_get(object, "type"));
-        if (type && strcmp(type, "session") == 0) {
+        if (control.kind == SESSION_CONTROL_HEADER) {
             free(out->id);
-            out->id = json_dup_string(object, "id");
+            out->id = control.id ? xstrdup(control.id) : NULL;
             free(out->cwd);
-            out->cwd = json_dup_string(object, "cwd");
-            apply_selection_record(out, object);
-        } else if (type && strcmp(type, "selection") == 0) {
-            apply_selection_record(out, object);
+            out->cwd = control.cwd ? xstrdup(control.cwd) : NULL;
         }
-        json_decref(object);
+        apply_selection_record(out, &control);
+        session_control_free(&control);
     }
     int result = ferror(file) ? -1 : 0;
     free(line);
@@ -912,64 +901,6 @@ static size_t remove_incomplete_tool_calls(struct item *items, size_t count)
     return kept;
 }
 
-/* A top-level type key identifies a control record; item lines use the typed adapter. */
-static int line_has_top_level_type_key(const char *line)
-{
-    size_t object_depth = 0;
-    const char *string_start = NULL;
-    int escaped = 0;
-    for (; *line; line++) {
-        if (string_start) {
-            if (escaped) {
-                escaped = 0;
-                continue;
-            }
-            if (*line == '\\') {
-                escaped = 1;
-                continue;
-            }
-            if (*line != '"')
-                continue;
-            if (object_depth == 1 && (size_t)(line - string_start) == 4 &&
-                memcmp(string_start, "type", 4) == 0) {
-                const char *next = line + 1;
-                while (isspace((unsigned char)*next))
-                    next++;
-                if (*next == ':')
-                    return 1;
-            }
-            string_start = NULL;
-            continue;
-        }
-        if (*line == '"') {
-            string_start = line + 1;
-        } else if (*line == '{') {
-            object_depth++;
-        } else if (*line == '}' && object_depth > 0) {
-            object_depth--;
-        }
-    }
-    return 0;
-}
-
-static int parse_control_record(const char *line, json_t **out)
-{
-    *out = NULL;
-    if (!line_has_top_level_type_key(line))
-        return 0;
-
-    json_t *object = json_loads(line, 0, NULL);
-    if (!object)
-        return 0;
-    const char *type = json_string_value(json_object_get(object, "type"));
-    if (!type || (strcmp(type, "session") != 0 && strcmp(type, "selection") != 0)) {
-        json_decref(object);
-        return 0;
-    }
-    *out = object;
-    return 1;
-}
-
 int session_load(const char *path, struct item **out_items, size_t *out_count,
                  struct session_meta *out_meta)
 {
@@ -991,25 +922,24 @@ int session_load(const char *path, struct item **out_items, size_t *out_count,
     size_t line_capacity = 0;
 
     while (getline(&line, &line_capacity, file) >= 0) {
-        json_t *control = NULL;
-        if (parse_control_record(line, &control)) {
-            const char *type = json_string_value(json_object_get(control, "type"));
-            if (strcmp(type, "session") == 0) {
-                if (!header_provider)
-                    header_provider = json_dup_string(control, "provider");
-                if (!header_model)
-                    header_model = json_dup_string(control, "model");
+        struct session_control control;
+        if (session_control_decode(line, &control) == SESSION_CONTROL_DECODED) {
+            if (control.kind == SESSION_CONTROL_HEADER) {
+                if (!header_provider && control.provider)
+                    header_provider = xstrdup(control.provider);
+                if (!header_model && control.model)
+                    header_model = xstrdup(control.model);
                 if (out_meta) {
                     free(out_meta->id);
-                    out_meta->id = json_dup_string(control, "id");
+                    out_meta->id = control.id ? xstrdup(control.id) : NULL;
                     free(out_meta->cwd);
-                    out_meta->cwd = json_dup_string(control, "cwd");
-                    apply_selection_record(out_meta, control);
+                    out_meta->cwd = control.cwd ? xstrdup(control.cwd) : NULL;
+                    apply_selection_record(out_meta, &control);
                 }
             } else if (out_meta) {
-                apply_selection_record(out_meta, control);
+                apply_selection_record(out_meta, &control);
             }
-            json_decref(control);
+            session_control_free(&control);
             continue;
         }
 
@@ -1063,33 +993,36 @@ void session_label_read(const char *path, int max_cells, struct session_label *o
     for (char *line = strtok_r(data, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
         if (!*line)
             continue;
+        struct session_control control;
+        const enum session_control_decode_result control_result =
+            session_control_decode(line, &control);
+        if (control_result != SESSION_CONTROL_NOT_FOUND) {
+            /* Only records ahead of the opening prompt are seen, so a later /model switch does not
+             * show up — the label describes what the conversation started as. */
+            if (control_result == SESSION_CONTROL_DECODED) {
+                free(out->provider);
+                out->provider = control.provider ? xstrdup(control.provider) : NULL;
+                free(out->model);
+                out->model = control.model_label ? xstrdup(control.model_label)
+                                                 : (control.model ? xstrdup(control.model) : NULL);
+                free(out->effort);
+                out->effort = control.effort ? xstrdup(control.effort) : NULL;
+                free(out->preset);
+                out->preset = control.preset ? xstrdup(control.preset) : NULL;
+                if (control.kind == SESSION_CONTROL_HEADER) {
+                    free(out->git_branch);
+                    out->git_branch = control.git_branch ? xstrdup(control.git_branch) : NULL;
+                    free(out->git_subject);
+                    out->git_subject = control.git_subject ? xstrdup(control.git_subject) : NULL;
+                }
+            }
+            session_control_free(&control);
+            continue;
+        }
+
         json_t *object = json_loads(line, 0, NULL);
         if (!object)
             continue;
-
-        const char *type = json_string_value(json_object_get(object, "type"));
-        if (type && (strcmp(type, "session") == 0 || strcmp(type, "selection") == 0)) {
-            /* Only records ahead of the opening prompt are seen, so a later /model switch does not
-             * show up — the label describes what the conversation started as. */
-            free(out->provider);
-            out->provider = json_dup_string(object, "provider");
-            free(out->model);
-            out->model = json_dup_string(object, "model_label");
-            if (!out->model)
-                out->model = json_dup_string(object, "model");
-            free(out->effort);
-            out->effort = json_dup_string(object, "effort");
-            free(out->preset);
-            out->preset = json_dup_string(object, "preset");
-            if (strcmp(type, "session") == 0) {
-                free(out->git_branch);
-                out->git_branch = json_dup_string(object, "git_branch");
-                free(out->git_subject);
-                out->git_subject = json_dup_string(object, "git_subject");
-            }
-            json_decref(object);
-            continue;
-        }
 
         const char *kind = json_string_value(json_object_get(object, "kind"));
         if (kind && strcmp(kind, "user") == 0) {

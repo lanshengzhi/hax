@@ -203,6 +203,18 @@ static char *write_session(const char *provider, const char *model, const char *
     return path;
 }
 
+static char *write_control_fixture(const char *contents)
+{
+    char *path = xasprintf("%s/session.jsonl", t_tempdir());
+    FILE *file = fopen(path, "w");
+    EXPECT(file != NULL);
+    if (file) {
+        EXPECT(fputs(contents, file) >= 0);
+        EXPECT(fclose(file) == 0);
+    }
+    return path;
+}
+
 static void test_item_codec_fixtures(void)
 {
     std::string encoded;
@@ -427,6 +439,53 @@ static void test_reasoning_provenance_round_trip(void)
     EXPECT(text && text->model && strcmp(text->model, "ma") == 0);
 
     free_items(items, n);
+    free(path);
+}
+
+static void test_control_fixture_readers(void)
+{
+    const char *contents =
+        R"({"\u0074ype":"session","version":1,"hax_version":"v0.4.0","id":"fixture-id","timestamp":"2026-08-25T00:00:00Z","cwd":"/fixture","provider":"old-provider","model":"old-model","model_label":"Old label","effort":"high","preset":"old","git_branch":"modern-cpp","git_commit":"abc123","git_subject":"Fixture subject","unknown_control":{"keep":true}})"
+        "\n"
+        R"({"type":"selection","provider":"new-provider","model":"new-model","model_label":"New label","unknown_selection":42})"
+        "\n"
+        R"({"kind":"turn_boundary"})"
+        "\n"
+        R"({"kind":"user","text":"fixture prompt"})"
+        "\n";
+    char *path = write_control_fixture(contents);
+
+    struct session_meta meta;
+    EXPECT(session_read_meta(path, &meta) == 0);
+    EXPECT_STR_EQ(meta.id, "fixture-id");
+    EXPECT_STR_EQ(meta.cwd, "/fixture");
+    EXPECT_STR_EQ(meta.provider, "new-provider");
+    EXPECT_STR_EQ(meta.model, "new-model");
+    EXPECT(meta.effort == NULL);
+    EXPECT(meta.preset == NULL);
+    session_meta_free(&meta);
+
+    struct item *items;
+    size_t item_count;
+    EXPECT(session_load(path, &items, &item_count, &meta) == 0);
+    EXPECT(item_count == 2);
+    EXPECT_STR_EQ(meta.provider, "new-provider");
+    EXPECT_STR_EQ(meta.model, "new-model");
+    EXPECT(meta.effort == NULL);
+    EXPECT(meta.preset == NULL);
+    free_items(items, item_count);
+    session_meta_free(&meta);
+
+    struct session_label label;
+    session_label_read(path, 64, &label);
+    EXPECT_STR_EQ(label.prompt, "fixture prompt");
+    EXPECT_STR_EQ(label.provider, "new-provider");
+    EXPECT_STR_EQ(label.model, "New label");
+    EXPECT(label.effort == NULL);
+    EXPECT(label.preset == NULL);
+    EXPECT_STR_EQ(label.git_branch, "modern-cpp");
+    EXPECT_STR_EQ(label.git_subject, "Fixture subject");
+    session_label_free(&label);
     free(path);
 }
 
@@ -1005,6 +1064,7 @@ int main(void)
     test_recording_control();
     test_session_round_trip();
     test_reasoning_provenance_round_trip();
+    test_control_fixture_readers();
     test_session_listing();
     test_session_file_permissions();
     test_resume_appends_only_new_items();

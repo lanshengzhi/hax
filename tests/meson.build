@@ -37,6 +37,7 @@ test_sources = [
     'test_select_config.cpp',
     'test_select_model.cpp',
     'test_session.cpp',
+    'test_session_control.cpp',
     'test_session_prune.cpp',
     'test_slash.cpp',
     'test_tool_schema.cpp',
