@@ -5,7 +5,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <jansson.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,28 +33,6 @@
 #else
 #define ST_MTIME_NSEC(st) ((long)(st).st_mtim.tv_nsec)
 #endif
-
-/* Unknown origins remain ordinary items; treating them as synthetic could hide a typed prompt. */
-static const struct {
-    enum item_origin origin;
-    const char *name;
-} ORIGIN_NAMES[] = {
-    {ITEM_ORIGIN_COMPACT_SEED, "compact_seed"}, {ITEM_ORIGIN_CONTINUATION, "continuation"},
-    {ITEM_ORIGIN_INTERRUPTED, "interrupted"},   {ITEM_ORIGIN_SKIPPED, "skipped"},
-    {ITEM_ORIGIN_REFUSED, "refused"},           {ITEM_ORIGIN_SUMMARIZED, "summarized"},
-    {ITEM_ORIGIN_TASK_NOTE, "task_note"},
-};
-
-static enum item_origin json_get_item_origin(const json_t *object)
-{
-    const char *name = json_string_value(json_object_get(object, "origin"));
-    if (!name)
-        return ITEM_ORIGIN_NONE;
-    for (size_t i = 0; i < sizeof(ORIGIN_NAMES) / sizeof(ORIGIN_NAMES[0]); i++)
-        if (strcmp(ORIGIN_NAMES[i].name, name) == 0)
-            return ORIGIN_NAMES[i].origin;
-    return ITEM_ORIGIN_NONE;
-}
 
 void session_meta_free(struct session_meta *meta)
 {
@@ -363,16 +340,6 @@ static const char *differing_model_label(const struct session_log *log)
     return log->model_label;
 }
 
-static int write_json_line(FILE *file, const json_t *object)
-{
-    char *json = json_dumps(object, JSON_COMPACT);
-    if (!json)
-        return -1;
-    int result = fputs(json, file) == EOF || fputc('\n', file) == EOF ? -1 : 0;
-    free(json);
-    return result;
-}
-
 static int write_text_line(FILE *file, std::string_view text)
 {
     return fwrite(text.data(), 1, text.size(), file) != text.size() || fputc('\n', file) == EOF ? -1
@@ -549,13 +516,6 @@ const char *session_log_resume_hint(const struct session_log *log)
     return log->id;
 }
 
-/* Keep this predicate aligned with agent.cpp's in-memory typed-prompt scan. */
-static int json_line_is_typed_prompt(const json_t *object)
-{
-    const char *kind = json_string_value(json_object_get(object, "kind"));
-    return kind && strcmp(kind, "user") == 0 && json_get_item_origin(object) == ITEM_ORIGIN_NONE;
-}
-
 /* The cut includes the retained turn's response and excludes the next turn's boundary. */
 static long find_turn_cut_offset(const char *path, size_t keep_turns)
 {
@@ -578,14 +538,20 @@ static long find_turn_cut_offset(const char *path, size_t keep_turns)
 
         int is_boundary = 0;
         int is_typed_prompt = 0;
-        json_t *object = json_loads(line, 0, NULL);
-        if (object) {
-            const char *kind = json_string_value(json_object_get(object, "kind"));
-            if (kind && strcmp(kind, "turn_boundary") == 0)
-                is_boundary = 1;
-            else
-                is_typed_prompt = json_line_is_typed_prompt(object);
-            json_decref(object);
+        struct session_control control;
+        const enum session_control_decode_result control_result =
+            session_control_decode(line, &control);
+        if (control_result != SESSION_CONTROL_NOT_FOUND) {
+            /* A malformed control-shaped record must not masquerade as a user prompt merely
+             * because it also carries a `kind` field. */
+            session_control_free(&control);
+        } else {
+            struct item item;
+            if (session_item_decode(line, &item) == 0) {
+                is_boundary = item.kind == ITEM_TURN_BOUNDARY;
+                is_typed_prompt = item.kind == ITEM_USER_MESSAGE && item.origin == ITEM_ORIGIN_NONE;
+                item_free(&item);
+            }
         }
 
         if (is_typed_prompt) {
@@ -685,11 +651,10 @@ int session_fork_file(const char *source_path, size_t keep_turns, char **out_pat
     int destination_fd = -1;
     FILE *source = NULL;
     FILE *destination = NULL;
-    json_t *header = NULL;
     char *header_line = NULL;
     char *destination_path = NULL;
-    const char *source_id = NULL;
     size_t header_capacity = 0;
+    std::string rewritten_header;
     ssize_t header_length = 0;
     char uuid[37];
     time_t now = 0;
@@ -704,10 +669,6 @@ int session_fork_file(const char *source_path, size_t keep_turns, char **out_pat
     header_length = getline(&header_line, &header_capacity, source);
     if (header_length < 0)
         goto out;
-    header = json_loads(header_line, 0, NULL);
-    if (!json_is_object(header))
-        goto out;
-
     gen_uuid_v4(uuid);
     now = time(NULL);
     struct tm utc;
@@ -717,11 +678,8 @@ int session_fork_file(const char *source_path, size_t keep_turns, char **out_pat
     strftime(filename_time, sizeof(filename_time), "%Y-%m-%dT%H-%M-%SZ", &utc);
     strftime(header_time, sizeof(header_time), "%Y-%m-%dT%H:%M:%SZ", &utc);
 
-    source_id = json_string_value(json_object_get(header, "id"));
-    if (source_id)
-        json_object_set_new(header, "forked_from", json_string(source_id));
-    json_object_set_new(header, "id", json_string(uuid));
-    json_object_set_new(header, "timestamp", json_string(header_time));
+    if (session_control_rewrite_header(header_line, uuid, header_time, &rewritten_header) < 0)
+        goto out;
 
     destination_path = fork_session_path(source_path, filename_time, uuid);
     destination_fd = open(destination_path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0600);
@@ -733,7 +691,7 @@ int session_fork_file(const char *source_path, size_t keep_turns, char **out_pat
         goto out;
     destination_fd = -1;
 
-    if (write_json_line(destination, header) < 0)
+    if (write_text_line(destination, rewritten_header) < 0)
         goto out;
     if (cut_offset > header_length &&
         (fseek(source, header_length, SEEK_SET) != 0 ||
@@ -758,8 +716,6 @@ out:
         unlink(destination_path);
     free(destination_path);
     free(header_line);
-    if (header)
-        json_decref(header);
     if (source)
         fclose(source);
     return result;

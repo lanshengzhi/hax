@@ -64,6 +64,10 @@ struct session_control_input {
 /* Encode borrowed project-owned fields as one compact JSON document. Returns zero on success or -1
  * when the record kind or a wire value cannot be encoded. */
 int session_control_encode(const struct session_control_input *input, std::string *out);
+/* Rewrite a forked header with a new identity and timestamp. Unknown fields and values are
+ * retained. Returns zero on success or -1 for an invalid header or argument. */
+int session_control_rewrite_header(std::string_view input, const char *id, const char *timestamp,
+                                   std::string *out);
 
 /* Zeroes the output and decodes one complete JSONL record. Unknown fields are accepted for
  * forward-compatible control records; malformed, unknown, or non-control records are not decoded.

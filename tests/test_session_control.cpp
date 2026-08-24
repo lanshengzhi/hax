@@ -110,6 +110,28 @@ static void test_encode_fixtures(void)
         R"({"type":"selection","provider":"beta","model":"next-model","model_label":"Next label"})");
 }
 
+static void test_rewrite_header_preserves_unknown_fields(void)
+{
+    const char *fixture =
+        R"({"type":"session","id":"parent-id","timestamp":"old-time","future":{"keep":[1,2]},"version":1})";
+    std::string rewritten;
+
+    EXPECT(session_control_rewrite_header(fixture, "child-id", "new-time", &rewritten) == 0);
+    EXPECT(rewritten.find(R"("future":{"keep":[1,2]})") != std::string::npos);
+
+    struct session_control control = {};
+    EXPECT(session_control_decode(rewritten, &control) == SESSION_CONTROL_DECODED);
+    EXPECT_STR_EQ(control.id, "child-id");
+    EXPECT_STR_EQ(control.timestamp, "new-time");
+    EXPECT_STR_EQ(control.forked_from, "parent-id");
+    session_control_free(&control);
+
+    EXPECT(session_control_rewrite_header(R"({"type":"selection"})", "child-id", "new-time",
+                                          &rewritten) == -1);
+    EXPECT(session_control_rewrite_header(R"({"kind":"user"})", "child-id", "new-time",
+                                          &rewritten) == -1);
+}
+
 static void test_selection_fixture_and_absence(void)
 {
     const char *fixture =
@@ -148,6 +170,7 @@ int main(void)
     test_old_header_fixture();
     test_escaped_type_key_fixture();
     test_encode_fixtures();
+    test_rewrite_header_preserves_unknown_fields();
     test_selection_fixture_and_absence();
     test_non_control_and_invalid_records();
     T_REPORT();

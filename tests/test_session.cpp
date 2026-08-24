@@ -884,6 +884,100 @@ static void test_truncate_all_turns(void)
     free(path);
 }
 
+static void test_cut_boundaries_preserve_fixture_records(void)
+{
+    use_fresh_session_state();
+    const char *contents =
+        R"({"type":"session","version":1,"id":"source-id","timestamp":"2026-08-25T00:00:00Z","provider":"pa","model":"ma","future":{"nested":[true,{"x":"y"}]}})"
+        "\n"
+        R"({"kind":"user","text":"summary","origin":"compact_seed","future":{"seed":true}})"
+        "\n"
+        R"({"kind":"user","text":"continuation","origin":"continuation"})"
+        "\n"
+        R"({"kind":"turn_boundary","future":true})"
+        "\n"
+        R"({"type":"selection","provider":7,"kind":"user","text":"not-a-prompt"})"
+        "\n"
+        "not-json\n"
+        R"({"kind":"user","text":"keep","future":{"retain":true}})"
+        "\n"
+        R"({"kind":"assistant","text":"answer","future":[1,2]})"
+        "\n"
+        R"({"kind":"turn_boundary"})"
+        "\n"
+        R"({"kind":"user","text":"discard"})"
+        "\n"
+        "{\"kind\":\"user\",\"text\":\"torn"
+        "\n";
+    const char *retained =
+        R"({"kind":"user","text":"summary","origin":"compact_seed","future":{"seed":true}})"
+        "\n"
+        R"({"kind":"user","text":"continuation","origin":"continuation"})"
+        "\n"
+        R"({"kind":"turn_boundary","future":true})"
+        "\n"
+        R"({"type":"selection","provider":7,"kind":"user","text":"not-a-prompt"})"
+        "\n"
+        "not-json\n"
+        R"({"kind":"user","text":"keep","future":{"retain":true}})"
+        "\n"
+        R"({"kind":"assistant","text":"answer","future":[1,2]})"
+        "\n";
+    char *source_path = write_control_fixture(contents);
+    size_t source_length;
+    char *before = slurp_file(source_path, &source_length);
+
+    char *fork_path = NULL;
+    EXPECT(session_fork_file(source_path, 1, &fork_path) == 0);
+    EXPECT(fork_path != NULL);
+    if (fork_path) {
+        size_t fork_length;
+        char *fork_data = slurp_file(fork_path, &fork_length);
+        EXPECT(fork_data != NULL);
+        if (fork_data) {
+            EXPECT(strstr(fork_data, retained) != NULL);
+            EXPECT(strstr(fork_data, R"("future":{"nested":[true,{"x":"y"}]})") != NULL);
+        }
+
+        struct item *items = NULL;
+        size_t item_count = 0;
+        struct session_meta meta;
+        EXPECT(session_load(fork_path, &items, &item_count, &meta) == 0);
+        EXPECT(item_count == 5);
+        if (item_count == 5) {
+            EXPECT(items[0].origin == ITEM_ORIGIN_COMPACT_SEED);
+            EXPECT(items[3].text && strcmp(items[3].text, "keep") == 0);
+            EXPECT_STR_EQ(items[4].text, "answer");
+        }
+        free_items(items, item_count);
+        session_meta_free(&meta);
+        free(fork_data);
+        free(fork_path);
+    }
+
+    size_t after_length;
+    char *after_fork = slurp_file(source_path, &after_length);
+    EXPECT(before != NULL && after_fork != NULL && source_length == after_length);
+    if (before && after_fork)
+        EXPECT(memcmp(before, after_fork, source_length) == 0);
+    free(after_fork);
+
+    struct session_log *log = session_log_resume(source_path, "pa", "ma", NULL, NULL, 5);
+    EXPECT(log != NULL);
+    if (log) {
+        EXPECT(session_log_truncate(log, 1, 5) == 0);
+        session_log_close(log);
+    }
+
+    struct item *items = NULL;
+    size_t item_count = 0;
+    EXPECT(session_load(source_path, &items, &item_count, NULL) == 0);
+    EXPECT(item_count == 5);
+    free_items(items, item_count);
+    free(before);
+    free(source_path);
+}
+
 static void test_fork_copies_prefix_without_touching_source(void)
 {
     use_fresh_session_state();
@@ -1164,6 +1258,7 @@ int main(void)
     test_log_materialization();
     test_truncate_and_reappend();
     test_truncate_all_turns();
+    test_cut_boundaries_preserve_fixture_records();
     test_fork_copies_prefix_without_touching_source();
     test_selection_metadata_tracks_productive_switches();
     test_discarded_selection_stays_out_of_log();

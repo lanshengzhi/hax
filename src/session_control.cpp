@@ -296,6 +296,39 @@ int session_control_encode(const struct session_control_input *input, std::strin
     return 0;
 }
 
+int session_control_rewrite_header(std::string_view input, const char *id, const char *timestamp,
+                                   std::string *out)
+{
+    if (!id || !timestamp || !out)
+        return -1;
+
+    struct session_control control = {};
+    if (session_control_decode(input, &control) != SESSION_CONTROL_DECODED ||
+        control.kind != SESSION_CONTROL_HEADER) {
+        session_control_free(&control);
+        return -1;
+    }
+    session_control_free(&control);
+
+    auto decoded = hax::json::parse<glz::generic_i64>(
+        input, {.source = "session header", .max_input_bytes = 0, .allow_unknown_keys = true});
+    if (!decoded || !decoded->is_object())
+        return -1;
+
+    auto &object = decoded->get_object();
+    const auto source_id = object.find("id");
+    if (source_id != object.end() && source_id->second.is_string())
+        object["forked_from"] = source_id->second.get_string();
+    object["id"] = id;
+    object["timestamp"] = timestamp;
+
+    auto encoded = hax::json::serialize(*decoded, {.source = "session header"});
+    if (!encoded)
+        return -1;
+    *out = std::move(*encoded);
+    return 0;
+}
+
 enum session_control_decode_result session_control_decode(std::string_view input,
                                                           struct session_control *out)
 {
