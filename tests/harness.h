@@ -142,7 +142,7 @@ static inline char *t_tempdir(void)
     }
     free(dir);
     dir = real;
-    char **grown = realloc(t_tmpdirs, (t_n_tmpdirs + 1) * sizeof(*grown));
+    char **grown = (char **)realloc(t_tmpdirs, (t_n_tmpdirs + 1) * sizeof(*grown));
     if (!grown)
         abort();
     t_tmpdirs = grown;

@@ -386,7 +386,7 @@ struct provider_factory {
     const char *display_name;
     /* `id` allows one constructor to serve multiple config-defined provider identities; it
      * outlives the provider, so constructors borrow it into provider->id. */
-    struct provider *(*new)(const char *id);
+    struct provider *(*create)(const char *id);
     /* Prepare an immediate verdict or an owned GET request on the foreground thread. `reason` must
      * be static. NULL means immediately available. */
     void (*prepare_availability)(const char *id, struct provider_availability *availability);

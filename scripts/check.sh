@@ -138,7 +138,7 @@ lint_sources() {
         export SDKROOT
     fi
 
-    find src tests -type f \( -name '*.c' -o -name '*.h' \) \
+    find src tests -type f \( -name '*.cpp' -o -name '*.h' \) \
         -exec "$clang_format" --dry-run --Werror --ferror-limit=1 {} +
     python3 scripts/lint_style.py
 

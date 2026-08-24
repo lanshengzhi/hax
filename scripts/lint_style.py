@@ -148,7 +148,7 @@ def check_file(path: Path) -> Iterator[Finding]:
 
 def source_files() -> Iterator[Path]:
     for root in ROOTS:
-        yield from sorted(p for p in root.rglob("*") if p.suffix in {".c", ".h"})
+        yield from sorted(p for p in root.rglob("*") if p.suffix in {".cpp", ".h"})
 
 
 def main() -> int:

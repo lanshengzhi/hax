@@ -45,7 +45,7 @@ static char *extract_task_id(const char *result)
         len++;
     if (len == 1)
         return NULL;
-    char *id = xmalloc(len + 1);
+    char *id = (char *)xmalloc(len + 1);
     memcpy(id, start, len);
     id[len] = '\0';
     return id;
@@ -146,7 +146,7 @@ struct display_capture {
 
 static void append_display(const char *bytes, size_t len, void *data)
 {
-    struct display_capture *capture = data;
+    struct display_capture *capture = (struct display_capture *)data;
     buf_append(&capture->buf, bytes, len);
 }
 
