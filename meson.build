@@ -40,6 +40,8 @@ add_project_arguments(
 # installs them outside the default system include path).
 libcurl = dependency('libcurl', include_type: 'system')
 jansson = dependency('jansson', include_type: 'system')
+glaze_project = subproject('glaze')
+glaze_dep = glaze_project.get_variable('glaze_dep')
 threads = dependency('threads')
 
 # FreeBSD resolves isfinite() to a libm symbol rather than a compiler builtin,
@@ -94,6 +96,7 @@ sources = files(
     'src/effort.cpp',
     'src/file_mention.cpp',
     'src/history.cpp',
+    'src/json.cpp',
     'src/login.cpp',
     'src/model_meta.cpp',
     'src/model_sort.cpp',
@@ -206,11 +209,11 @@ sources = files(
 hax_lib = static_library('hax_lib',
     sources,
     version_h,
-    dependencies: [libcurl, jansson, threads, libm],
+    dependencies: [libcurl, jansson, glaze_dep, threads, libm],
 )
 
 # Wrap the library as a dependency so consumers inherit both the link against
-# `hax_lib` and the include dirs / compile flags of libcurl / jansson / threads
+# `hax_lib` and the include dirs / compile flags of libcurl / jansson / Glaze / threads
 # — their own translation units (`main.cpp`, each test) include <jansson.h> etc.
 # and need those paths at compile time, which `link_with` alone wouldn't carry.
 # Only the compile-side of each dependency is propagated here via
@@ -222,6 +225,7 @@ hax_dep = declare_dependency(
     dependencies: [
         libcurl.partial_dependency(compile_args: true, includes: true),
         jansson.partial_dependency(compile_args: true, includes: true),
+        glaze_dep.partial_dependency(compile_args: true, includes: true),
         threads.partial_dependency(compile_args: true, includes: true),
     ],
 )

@@ -69,7 +69,14 @@ make install              # optional; may prompt for sudo
 
 `scripts/install_deps.sh` installs the build dependencies — a C compiler, `libcurl`,
 `jansson`, `meson`, `ninja`, and `pkg-config` — plus `fzf`, which hax uses for `@file`
-completion when available. On other platforms, install those packages by hand and run `make`.
+completion when available. Meson fetches the header-only Glaze v8.1.0 JSON dependency from a
+pinned source archive, so no separate Glaze checkout or system package is required. Glaze is also
+available as Debian's [`libglaze-dev`](https://packages.debian.org/sid/amd64/libdevel/libglaze-dev)
+package and Homebrew's [`glaze`](https://formulae.brew.sh/formula/glaze) formula; the archive keeps
+this build independent of installed package revisions. Homebrew installs it with
+`brew install glaze`.
+Glaze requires C++23; its v8.1.0 build matrix covers GCC 13+, Clang 18+, and MSVC 14.50+.
+On other platforms, install the listed packages by hand and run `make`.
 
 For hacking on hax, `make symlink` links the freshly built binary into `~/.local/bin` so it
 stays on `PATH` across rebuilds. `make lint` additionally needs `clang-format` and

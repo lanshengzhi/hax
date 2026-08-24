@@ -12,6 +12,8 @@ notes (see [docs/releasing.md](docs/releasing.md)).
 - Continue the incremental C++ migration with C++23: the Meson build, production sources, and
   tests now compile with the C++23 toolchain while preserving the existing provider and tool
   interfaces.
+- Pin the header-only Glaze v8.1.0 JSON dependency to a verified Meson source archive and expose
+  it only through the project-owned JSON adapter while preserving Jansson for existing paths.
 
 
 ## [0.4.0] - 2026-08-22

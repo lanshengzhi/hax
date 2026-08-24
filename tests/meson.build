@@ -27,6 +27,7 @@ test_sources = [
     'test_effort.cpp',
     'test_file_mention.cpp',
     'test_history.cpp',
+    'test_json.cpp',
     'test_model_meta.cpp',
     'test_model_sort.cpp',
     'test_harness.cpp',
