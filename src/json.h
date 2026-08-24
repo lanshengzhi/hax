@@ -31,6 +31,7 @@ enum class error_code {
 struct options {
     std::string_view source = "<json>";
     size_t max_input_bytes = 1 << 20;
+    bool allow_unknown_keys = false; /* Preserve extension fields when the wire contract permits. */
 };
 
 /* An owning, provider-independent JSON failure. `source` and `message` remain valid after the
@@ -79,6 +80,10 @@ struct read_options : glz::opts {
     bool null_terminated = false;
     bool validate_skipped = true;
     bool validate_trailing_whitespace = true;
+};
+
+struct relaxed_read_options : read_options {
+    bool error_on_unknown_keys = false;
 };
 
 inline bool valid_prefix(std::string_view input, size_t end)
@@ -149,7 +154,9 @@ template <typename T> std::expected<T, error> parse(std::string_view input, opti
         return std::unexpected(input_check.error());
 
     T value{};
-    const glz::error_ctx glaze_error = glz::read<detail::read_options{}>(value, input);
+    const glz::error_ctx glaze_error = options.allow_unknown_keys
+                                           ? glz::read<detail::relaxed_read_options{}>(value, input)
+                                           : glz::read<detail::read_options{}>(value, input);
     if (glaze_error)
         return std::unexpected(detail::from_read_error(glaze_error, input, options));
 

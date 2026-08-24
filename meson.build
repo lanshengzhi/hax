@@ -105,6 +105,7 @@ sources = files(
     'src/provider.cpp',
     'src/select.cpp',
     'src/session.cpp',
+    'src/session_item.cpp',
     'src/session_picker.cpp',
     'src/session_prune.cpp',
     'src/slash.cpp',

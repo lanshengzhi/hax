@@ -17,6 +17,7 @@
 
 #include "config.h"
 #include "provider.h"
+#include "session_item.h"
 #include "session_prune.h"
 #include "util.h"
 #include "version.h"
@@ -33,51 +34,7 @@
 #define ST_MTIME_NSEC(st) ((long)(st).st_mtim.tv_nsec)
 #endif
 
-static const char *item_kind_name(enum item_kind k)
-{
-    switch (k) {
-    case ITEM_USER_MESSAGE:
-        return "user";
-    case ITEM_ASSISTANT_MESSAGE:
-        return "assistant";
-    case ITEM_TOOL_CALL:
-        return "tool_call";
-    case ITEM_TOOL_RESULT:
-        return "tool_result";
-    case ITEM_REASONING:
-        return "reasoning";
-    case ITEM_TURN_BOUNDARY:
-        return "turn_boundary";
-    case ITEM_TURN_USAGE:
-        return "turn_usage";
-    }
-    return NULL;
-}
-
-static int parse_item_kind(const char *name, enum item_kind *out)
-{
-    if (!name)
-        return -1;
-    if (strcmp(name, "user") == 0)
-        *out = ITEM_USER_MESSAGE;
-    else if (strcmp(name, "assistant") == 0)
-        *out = ITEM_ASSISTANT_MESSAGE;
-    else if (strcmp(name, "tool_call") == 0)
-        *out = ITEM_TOOL_CALL;
-    else if (strcmp(name, "tool_result") == 0)
-        *out = ITEM_TOOL_RESULT;
-    else if (strcmp(name, "reasoning") == 0)
-        *out = ITEM_REASONING;
-    else if (strcmp(name, "turn_boundary") == 0)
-        *out = ITEM_TURN_BOUNDARY;
-    else if (strcmp(name, "turn_usage") == 0)
-        *out = ITEM_TURN_USAGE;
-    else
-        return -1;
-    return 0;
-}
-
-/* Jansson rejects invalid UTF-8; omit such unexpected values rather than storing JSON null. */
+/* These helpers serialize session control records, not conversation items. */
 static void json_set_optional_string(json_t *object, const char *key, const char *value)
 {
     if (!value)
@@ -87,96 +44,10 @@ static void json_set_optional_string(json_t *object, const char *key, const char
         json_object_set_new(object, key, string);
 }
 
-static void json_set_nonnegative_integer(json_t *object, const char *key, long value)
-{
-    if (value >= 0)
-        json_object_set_new(object, key, json_integer(value));
-}
-
-static void json_set_nonnegative_real(json_t *object, const char *key, double value)
-{
-    if (value >= 0)
-        json_object_set_new(object, key, json_real(value));
-}
-
-static json_t *turn_usage_to_json(const struct turn_usage *usage)
-{
-    json_t *object = json_object();
-    json_set_nonnegative_integer(object, "input", usage->usage.input_tokens);
-    json_set_nonnegative_integer(object, "output", usage->usage.output_tokens);
-    json_set_nonnegative_integer(object, "cached", usage->usage.cached_tokens);
-    json_set_nonnegative_integer(object, "cache_write", usage->usage.cache_write_tokens);
-    json_set_nonnegative_integer(object, "cache_write_1h", usage->usage.cache_write_1h_tokens);
-    json_set_nonnegative_real(object, "cost", usage->usage.cost);
-    json_set_nonnegative_integer(object, "elapsed_ms", usage->elapsed_ms);
-    json_set_nonnegative_integer(object, "in_tokens", usage->uncached_input_tokens);
-    json_set_nonnegative_real(object, "cost_in", usage->cost_input);
-    json_set_nonnegative_real(object, "cost_cache_read", usage->cost_cache_read);
-    json_set_nonnegative_real(object, "cost_cache_write", usage->cost_cache_write);
-    json_set_nonnegative_real(object, "cost_out", usage->cost_output);
-    json_set_nonnegative_real(object, "cost_total", usage->cost_total);
-    if (usage->cost_estimated)
-        json_object_set_new(object, "cost_estimated", json_true());
-    json_set_optional_string(object, "provider_label", usage->provenance.provider_label);
-    json_set_optional_string(object, "model_label", usage->provenance.model_label);
-    json_set_optional_string(object, "effort", usage->provenance.effort);
-    json_set_optional_string(object, "served_model", usage->provenance.served_model);
-    json_set_optional_string(object, "route", usage->provenance.route);
-    json_set_optional_string(object, "response_id", usage->provenance.response_id);
-    return object;
-}
-
-static long json_get_integer_or_negative(const json_t *object, const char *key)
-{
-    json_t *value = json_object_get(object, key);
-    return json_is_integer(value) ? (long)json_integer_value(value) : -1;
-}
-
-static double json_get_real_or_negative(const json_t *object, const char *key)
-{
-    json_t *value = json_object_get(object, key);
-    return json_is_number(value) ? json_number_value(value) : -1;
-}
-
 static char *json_dup_string(const json_t *object, const char *key)
 {
     const char *value = json_string_value(json_object_get(object, key));
     return value ? xstrdup(value) : NULL;
-}
-
-static struct turn_usage *turn_usage_from_json(const json_t *object)
-{
-    if (!json_is_object(object))
-        return NULL;
-    struct turn_usage *usage = (struct turn_usage *)xmalloc(sizeof(*usage));
-    usage->usage.input_tokens = json_get_integer_or_negative(object, "input");
-    usage->usage.output_tokens = json_get_integer_or_negative(object, "output");
-    usage->usage.cached_tokens = json_get_integer_or_negative(object, "cached");
-    usage->usage.cache_write_tokens = json_get_integer_or_negative(object, "cache_write");
-    usage->usage.cache_write_1h_tokens = json_get_integer_or_negative(object, "cache_write_1h");
-    usage->usage.cost = json_get_real_or_negative(object, "cost");
-    usage->elapsed_ms = json_get_integer_or_negative(object, "elapsed_ms");
-    usage->uncached_input_tokens = json_get_integer_or_negative(object, "in_tokens");
-    if (usage->uncached_input_tokens < 0) {
-        /* These legacy records predate surcharge pricing, so plain subtraction is correct. */
-        long cached = usage->usage.cached_tokens > 0 ? usage->usage.cached_tokens : 0;
-        long written = usage->usage.cache_write_tokens > 0 ? usage->usage.cache_write_tokens : 0;
-        long uncached = usage->usage.input_tokens - cached - written;
-        usage->uncached_input_tokens = uncached > 0 ? uncached : 0;
-    }
-    usage->cost_input = json_get_real_or_negative(object, "cost_in");
-    usage->cost_cache_read = json_get_real_or_negative(object, "cost_cache_read");
-    usage->cost_cache_write = json_get_real_or_negative(object, "cost_cache_write");
-    usage->cost_output = json_get_real_or_negative(object, "cost_out");
-    usage->cost_total = json_get_real_or_negative(object, "cost_total");
-    usage->cost_estimated = json_is_true(json_object_get(object, "cost_estimated"));
-    usage->provenance.provider_label = json_dup_string(object, "provider_label");
-    usage->provenance.model_label = json_dup_string(object, "model_label");
-    usage->provenance.effort = json_dup_string(object, "effort");
-    usage->provenance.served_model = json_dup_string(object, "served_model");
-    usage->provenance.route = json_dup_string(object, "route");
-    usage->provenance.response_id = json_dup_string(object, "response_id");
-    return usage;
 }
 
 /* Unknown origins remain ordinary items; treating them as synthetic could hide a typed prompt. */
@@ -190,14 +61,6 @@ static const struct {
     {ITEM_ORIGIN_TASK_NOTE, "task_note"},
 };
 
-static const char *origin_to_str(enum item_origin origin)
-{
-    for (size_t i = 0; i < sizeof(ORIGIN_NAMES) / sizeof(ORIGIN_NAMES[0]); i++)
-        if (ORIGIN_NAMES[i].origin == origin)
-            return ORIGIN_NAMES[i].name;
-    return NULL; /* ITEM_ORIGIN_NONE: the key is omitted */
-}
-
 static enum item_origin json_get_item_origin(const json_t *object)
 {
     const char *name = json_string_value(json_object_get(object, "origin"));
@@ -207,97 +70,6 @@ static enum item_origin json_get_item_origin(const json_t *object)
         if (strcmp(ORIGIN_NAMES[i].name, name) == 0)
             return ORIGIN_NAMES[i].origin;
     return ITEM_ORIGIN_NONE;
-}
-
-json_t *item_to_json(const struct item *item)
-{
-    json_t *object = json_object();
-    json_set_optional_string(object, "kind", item_kind_name(item->kind));
-    json_set_optional_string(object, "text", item->text);
-    json_set_optional_string(object, "call_id", item->call_id);
-    json_set_optional_string(object, "tool_name", item->tool_name);
-    json_set_optional_string(object, "arguments", item->tool_arguments_json);
-    json_set_optional_string(object, "output", item->output);
-    if (item->output_hidden_tail)
-        json_object_set_new(object, "output_hidden_tail",
-                            json_integer((json_int_t)item->output_hidden_tail));
-    json_set_optional_string(object, "reasoning_json", item->reasoning_json);
-    json_set_optional_string(object, "reasoning_text", item->reasoning_text);
-    json_set_optional_string(object, "provider", item->provider);
-    json_set_optional_string(object, "model", item->model);
-    json_set_optional_string(object, "origin", origin_to_str(item->origin));
-    if (item->usage)
-        json_object_set_new(object, "usage", turn_usage_to_json(item->usage));
-    if (item->n_images) {
-        json_t *images = json_array();
-        for (size_t i = 0; i < item->n_images; i++) {
-            const struct item_image *image = &item->images[i];
-            json_t *image_object = json_object();
-            json_set_optional_string(image_object, "mime", image->mime);
-            json_set_optional_string(image_object, "data", image->data_b64);
-            if (image->width > 0)
-                json_object_set_new(image_object, "width", json_integer(image->width));
-            if (image->height > 0)
-                json_object_set_new(image_object, "height", json_integer(image->height));
-            json_array_append_new(images, image_object);
-        }
-        json_object_set_new(object, "images", images);
-    }
-    return object;
-}
-
-int item_from_json(const json_t *object, struct item *out)
-{
-    memset(out, 0, sizeof(*out));
-    if (!json_is_object(object))
-        return -1;
-    enum item_kind kind;
-    if (parse_item_kind(json_string_value(json_object_get(object, "kind")), &kind) < 0)
-        return -1;
-    out->kind = kind;
-    out->text = json_dup_string(object, "text");
-    out->call_id = json_dup_string(object, "call_id");
-    out->tool_name = json_dup_string(object, "tool_name");
-    out->tool_arguments_json = json_dup_string(object, "arguments");
-    out->output = json_dup_string(object, "output");
-    json_t *hidden_tail = json_object_get(object, "output_hidden_tail");
-    if (json_is_integer(hidden_tail) && json_integer_value(hidden_tail) > 0)
-        out->output_hidden_tail = (size_t)json_integer_value(hidden_tail);
-    out->reasoning_json = json_dup_string(object, "reasoning_json");
-    out->reasoning_text = json_dup_string(object, "reasoning_text");
-    out->provider = json_dup_string(object, "provider");
-    out->model = json_dup_string(object, "model");
-    out->origin = json_get_item_origin(object);
-    if (kind == ITEM_TURN_USAGE)
-        out->usage = turn_usage_from_json(json_object_get(object, "usage"));
-
-    json_t *images = json_object_get(object, "images");
-    size_t image_count = json_is_array(images) ? json_array_size(images) : 0;
-    if (image_count > 0) {
-        out->images = (item_image *)xcalloc(image_count, sizeof(*out->images));
-        for (size_t i = 0; i < image_count; i++) {
-            json_t *image_object = json_array_get(images, i);
-            struct item_image *image = &out->images[out->n_images];
-            image->mime = json_dup_string(image_object, "mime");
-            image->data_b64 = json_dup_string(image_object, "data");
-            if (!image->data_b64 || !image->mime) {
-                free(image->mime);
-                free(image->data_b64);
-                image->mime = image->data_b64 = NULL;
-                continue;
-            }
-            json_t *value = json_object_get(image_object, "width");
-            image->width = json_is_integer(value) ? (long)json_integer_value(value) : 0;
-            value = json_object_get(image_object, "height");
-            image->height = json_is_integer(value) ? (long)json_integer_value(value) : 0;
-            out->n_images++;
-        }
-        if (out->n_images == 0) {
-            free(out->images);
-            out->images = NULL;
-        }
-    }
-    return 0;
 }
 
 void session_meta_free(struct session_meta *meta)
@@ -616,6 +388,12 @@ static int write_json_line(FILE *file, const json_t *object)
     return result;
 }
 
+static int write_text_line(FILE *file, std::string_view text)
+{
+    return fwrite(text.data(), 1, text.size(), file) != text.size() || fputc('\n', file) == EOF ? -1
+                                                                                                : 0;
+}
+
 static int write_header(struct session_log *log)
 {
     json_t *header = json_object();
@@ -692,10 +470,8 @@ void session_log_append(struct session_log *log, const struct item *items, size_
         log->selection_pending = 0;
     }
     for (size_t i = log->written_items; i < item_count; i++) {
-        json_t *object = item_to_json(&items[i]);
-        int result = write_json_line(log->file, object);
-        json_decref(object);
-        if (result < 0)
+        std::string encoded;
+        if (session_item_encode(&items[i], &encoded) < 0 || write_text_line(log->file, encoded) < 0)
             return;
         log->written_items = i + 1;
     }
@@ -782,7 +558,7 @@ const char *session_log_resume_hint(const struct session_log *log)
     return log->id;
 }
 
-/* Keep this predicate aligned with agent.c's in-memory typed-prompt scan. */
+/* Keep this predicate aligned with agent.cpp's in-memory typed-prompt scan. */
 static int json_line_is_typed_prompt(const json_t *object)
 {
     const char *kind = json_string_value(json_object_get(object, "kind"));
@@ -1136,6 +912,64 @@ static size_t remove_incomplete_tool_calls(struct item *items, size_t count)
     return kept;
 }
 
+/* A top-level type key identifies a control record; item lines use the typed adapter. */
+static int line_has_top_level_type_key(const char *line)
+{
+    size_t object_depth = 0;
+    const char *string_start = NULL;
+    int escaped = 0;
+    for (; *line; line++) {
+        if (string_start) {
+            if (escaped) {
+                escaped = 0;
+                continue;
+            }
+            if (*line == '\\') {
+                escaped = 1;
+                continue;
+            }
+            if (*line != '"')
+                continue;
+            if (object_depth == 1 && (size_t)(line - string_start) == 4 &&
+                memcmp(string_start, "type", 4) == 0) {
+                const char *next = line + 1;
+                while (isspace((unsigned char)*next))
+                    next++;
+                if (*next == ':')
+                    return 1;
+            }
+            string_start = NULL;
+            continue;
+        }
+        if (*line == '"') {
+            string_start = line + 1;
+        } else if (*line == '{') {
+            object_depth++;
+        } else if (*line == '}' && object_depth > 0) {
+            object_depth--;
+        }
+    }
+    return 0;
+}
+
+static int parse_control_record(const char *line, json_t **out)
+{
+    *out = NULL;
+    if (!line_has_top_level_type_key(line))
+        return 0;
+
+    json_t *object = json_loads(line, 0, NULL);
+    if (!object)
+        return 0;
+    const char *type = json_string_value(json_object_get(object, "type"));
+    if (!type || (strcmp(type, "session") != 0 && strcmp(type, "selection") != 0)) {
+        json_decref(object);
+        return 0;
+    }
+    *out = object;
+    return 1;
+}
+
 int session_load(const char *path, struct item **out_items, size_t *out_count,
                  struct session_meta *out_meta)
 {
@@ -1157,35 +991,30 @@ int session_load(const char *path, struct item **out_items, size_t *out_count,
     size_t line_capacity = 0;
 
     while (getline(&line, &line_capacity, file) >= 0) {
-        json_t *object = json_loads(line, 0, NULL);
-        if (!object)
-            continue; /* A crash may leave one partial final record. */
-
-        const char *type = json_string_value(json_object_get(object, "type"));
-        if (type && strcmp(type, "session") == 0) {
-            if (!header_provider)
-                header_provider = json_dup_string(object, "provider");
-            if (!header_model)
-                header_model = json_dup_string(object, "model");
-            if (out_meta) {
-                free(out_meta->id);
-                out_meta->id = json_dup_string(object, "id");
-                free(out_meta->cwd);
-                out_meta->cwd = json_dup_string(object, "cwd");
-                apply_selection_record(out_meta, object);
+        json_t *control = NULL;
+        if (parse_control_record(line, &control)) {
+            const char *type = json_string_value(json_object_get(control, "type"));
+            if (strcmp(type, "session") == 0) {
+                if (!header_provider)
+                    header_provider = json_dup_string(control, "provider");
+                if (!header_model)
+                    header_model = json_dup_string(control, "model");
+                if (out_meta) {
+                    free(out_meta->id);
+                    out_meta->id = json_dup_string(control, "id");
+                    free(out_meta->cwd);
+                    out_meta->cwd = json_dup_string(control, "cwd");
+                    apply_selection_record(out_meta, control);
+                }
+            } else if (out_meta) {
+                apply_selection_record(out_meta, control);
             }
-            json_decref(object);
-            continue;
-        }
-        if (type && strcmp(type, "selection") == 0) {
-            if (out_meta)
-                apply_selection_record(out_meta, object);
-            json_decref(object);
+            json_decref(control);
             continue;
         }
 
         struct item item;
-        if (item_from_json(object, &item) == 0) {
+        if (session_item_decode(line, &item) == 0) {
             /* Old reasoning records inherit the header provenance needed for safe replay. */
             if (item.kind == ITEM_REASONING) {
                 if (!item.provider && header_provider)
@@ -1195,7 +1024,6 @@ int session_load(const char *path, struct item **out_items, size_t *out_count,
             }
             push_item(&items, &count, &capacity, item);
         }
-        json_decref(object);
     }
 
     int read_failed = ferror(file);

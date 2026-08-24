@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 #include <unistd.h>
 #include <sys/stat.h>
 
 #include "harness.h"
 #include "provider.h"
 #include "session.h"
+#include "session_item.h"
 #include "util.h"
 #include "system/git.h"
 
@@ -78,24 +79,17 @@ static int items_equal(const struct item *a, const struct item *b)
            turn_usage_equal(a->usage, b->usage) && item_images_equal(a, b);
 }
 
-static void expect_item_codec_round_trip(const struct item *source)
+static void expect_item_fixture(const char *fixture, const struct item *expected)
 {
-    json_t *encoded = item_to_json(source);
-    EXPECT(encoded != NULL);
-    char *text = json_dumps(encoded, JSON_COMPACT);
-    EXPECT(text != NULL);
-    json_decref(encoded);
-
-    json_t *decoded = json_loads(text, 0, NULL);
-    EXPECT(decoded != NULL);
-    struct item result;
-    EXPECT(item_from_json(decoded, &result) == 0);
-    EXPECT(items_equal(source, &result));
-    EXPECT(nullable_strings_equal(source->provider, result.provider));
-    EXPECT(nullable_strings_equal(source->model, result.model));
-    item_free(&result);
-    json_decref(decoded);
-    free(text);
+    struct item decoded;
+    const int result = session_item_decode(fixture, &decoded);
+    EXPECT(result == 0);
+    if (result == 0) {
+        EXPECT(items_equal(&decoded, expected));
+        EXPECT(nullable_strings_equal(decoded.provider, expected->provider));
+        EXPECT(nullable_strings_equal(decoded.model, expected->model));
+        item_free(&decoded);
+    }
 }
 
 /* Static fixture objects borrow their strings and are never passed to item_free. */
@@ -209,10 +203,154 @@ static char *write_session(const char *provider, const char *model, const char *
     return path;
 }
 
-static void test_item_codec_round_trip(void)
+static void test_item_codec_fixtures(void)
 {
-    for (size_t i = 0; i < CONVERSATION_COUNT; i++)
-        expect_item_codec_round_trip(&CONVERSATION[i]);
+    std::string encoded;
+    EXPECT(session_item_encode(&CONVERSATION[6], &encoded) == 0);
+    EXPECT(
+        encoded ==
+        R"({"kind":"tool_result","call_id":"c2","output":"Read image shot.png","images":[{"mime":"image/png","data":"iVBORw0KGgo=","width":2,"height":3}]})");
+
+    EXPECT(session_item_encode(&CONVERSATION[7], &encoded) == 0);
+    EXPECT(
+        encoded ==
+        R"({"kind":"turn_usage","provider":"alpha","model":"m1","usage":{"input":30000,"output":2100,"cached":16000,"cache_write":8200,"elapsed_ms":42000,"in_tokens":5800,"cost_in":0.025,"cost_cache_read":0.048,"cost_cache_write":0.031,"cost_out":0.084,"cost_total":0.188,"cost_estimated":true,"provider_label":"llama.cpp","model_label":"qwen3-30b-a3b","effort":"high","served_model":"deepseek/deepseek-v4","route":"Wafer","response_id":"gen-abc"}})");
+
+    EXPECT(session_item_encode(&CONVERSATION[13], &encoded) == 0);
+    EXPECT(
+        encoded ==
+        R"({"kind":"tool_result","call_id":"c5","output":"hi\n\n[finished during launch; no task created]","output_hidden_tail":42})");
+
+    char invalid_text[] = {'x', static_cast<char>(0xff), '\0'};
+    struct item invalid = {.kind = ITEM_USER_MESSAGE, .text = invalid_text};
+    EXPECT(session_item_encode(&invalid, &encoded) == 0);
+    EXPECT(encoded == R"({"kind":"user"})");
+
+    const struct item boundary = {.kind = ITEM_TURN_BOUNDARY};
+    expect_item_fixture(R"({"kind":"turn_boundary"})", &boundary);
+
+    const struct item user = {.kind = ITEM_USER_MESSAGE, .text = (char *)"hello"};
+    expect_item_fixture(R"({"kind":"user","text":"hello","future":"ignored"})", &user);
+
+    const struct item assistant = {.kind = ITEM_ASSISTANT_MESSAGE, .text = (char *)"answer"};
+    expect_item_fixture(R"({"kind":"assistant","text":"answer"})", &assistant);
+
+    const struct item call = {.kind = ITEM_TOOL_CALL,
+                              .call_id = (char *)"c1",
+                              .tool_name = (char *)"bash",
+                              .tool_arguments_json = (char *)"{\"cmd\":\"ls\"}"};
+    expect_item_fixture(
+        R"({"kind":"tool_call","call_id":"c1","tool_name":"bash","arguments":"{\"cmd\":\"ls\"}"})",
+        &call);
+
+    const struct item reasoning = {.kind = ITEM_REASONING,
+                                   .reasoning_json = (char *)"{\"id\":\"r1\"}",
+                                   .reasoning_text = (char *)"thinking",
+                                   .provider = (char *)"pa",
+                                   .model = (char *)"m1"};
+    expect_item_fixture(
+        R"({"kind":"reasoning","reasoning_json":"{\"id\":\"r1\"}","reasoning_text":"thinking","provider":"pa","model":"m1"})",
+        &reasoning);
+
+    struct item_image valid_image = {
+        .mime = (char *)"image/png", .data_b64 = (char *)"AQ==", .width = 2, .height = 3};
+    const struct item image_result = {.kind = ITEM_TOOL_RESULT,
+                                      .output = (char *)"result",
+                                      .images = &valid_image,
+                                      .n_images = 1};
+    expect_item_fixture(
+        R"({"kind":"tool_result","output":"result","images":[42,"not an image",{"mime":7,"data":"AQ=="},{"mime":"image/png","width":4},{"data":"Ag=="},{"mime":"image/png","data":"AQ==","width":2,"height":3,"future":true}],"future":false})",
+        &image_result);
+
+    struct turn_usage legacy_usage = {
+        .usage = {.input_tokens = 100,
+                  .output_tokens = -1,
+                  .cached_tokens = 20,
+                  .cache_write_tokens = 10,
+                  .cache_write_1h_tokens = -1,
+                  .cost = -1},
+        .elapsed_ms = -1,
+        .uncached_input_tokens = 70,
+        .cost_input = -1,
+        .cost_cache_read = -1,
+        .cost_cache_write = -1,
+        .cost_output = -1,
+        .cost_total = -1,
+        .cost_estimated = 0,
+    };
+    const struct item legacy = {.kind = ITEM_TURN_USAGE, .usage = &legacy_usage};
+    expect_item_fixture(
+        R"({"kind":"turn_usage","usage":{"input":100,"cached":20,"cache_write":10,"future":true},"future":false})",
+        &legacy);
+
+    struct turn_usage missing_input_usage = {
+        .usage = {.input_tokens = -1,
+                  .output_tokens = -1,
+                  .cached_tokens = -1,
+                  .cache_write_tokens = -1,
+                  .cache_write_1h_tokens = -1,
+                  .cost = -1},
+        .elapsed_ms = -1,
+        .uncached_input_tokens = 0,
+        .cost_input = -1,
+        .cost_cache_read = -1,
+        .cost_cache_write = -1,
+        .cost_output = -1,
+        .cost_total = -1,
+        .cost_estimated = 0,
+    };
+    const struct item missing_input = {.kind = ITEM_TURN_USAGE, .usage = &missing_input_usage};
+    expect_item_fixture(R"({"kind":"turn_usage","usage":{}})", &missing_input);
+
+    const struct item usage = {.kind = ITEM_TURN_USAGE,
+                               .provider = (char *)"alpha",
+                               .model = (char *)"m1",
+                               .usage = &ESTIMATED_USAGE};
+    expect_item_fixture(
+        R"({"kind":"turn_usage","provider":"alpha","model":"m1","usage":{"input":30000,"output":2100,"cached":16000,"cache_write":8200,"elapsed_ms":42000,"in_tokens":5800,"cost_in":0.025,"cost_cache_read":0.048,"cost_cache_write":0.031,"cost_out":0.084,"cost_total":0.188,"cost_estimated":true,"provider_label":"llama.cpp","model_label":"qwen3-30b-a3b","effort":"high","served_model":"deepseek/deepseek-v4","route":"Wafer","response_id":"gen-abc","future":1},"future":false})",
+        &usage);
+
+    const struct item hidden_tail = {
+        .kind = ITEM_TOOL_RESULT,
+        .call_id = (char *)"c5",
+        .output = (char *)"hi\n\n[finished during launch; no task created]",
+        .output_hidden_tail = sizeof("\n[finished during launch; no task created]") - 1,
+    };
+    expect_item_fixture(
+        R"({"kind":"tool_result","call_id":"c5","output":"hi\n\n[finished during launch; no task created]","output_hidden_tail":42})",
+        &hidden_tail);
+
+    struct origin_fixture {
+        const char *json;
+        enum item_origin origin;
+    };
+    static const origin_fixture origins[] = {
+        {R"({"kind":"user","text":"marker"})", ITEM_ORIGIN_NONE},
+        {R"({"kind":"user","text":"marker","origin":"compact_seed"})", ITEM_ORIGIN_COMPACT_SEED},
+        {R"({"kind":"user","text":"marker","origin":"continuation"})", ITEM_ORIGIN_CONTINUATION},
+        {R"({"kind":"assistant","text":"marker","origin":"interrupted"})", ITEM_ORIGIN_INTERRUPTED},
+        {R"({"kind":"tool_result","output":"marker","origin":"skipped"})", ITEM_ORIGIN_SKIPPED},
+        {R"({"kind":"tool_result","output":"marker","origin":"refused"})", ITEM_ORIGIN_REFUSED},
+        {R"({"kind":"tool_result","output":"marker","origin":"summarized"})",
+         ITEM_ORIGIN_SUMMARIZED},
+        {R"({"kind":"user","text":"marker","origin":"task_note"})", ITEM_ORIGIN_TASK_NOTE},
+        {R"({"kind":"user","text":"marker","origin":"future"})", ITEM_ORIGIN_NONE},
+    };
+    for (const origin_fixture &fixture : origins) {
+        const int is_tool_result = fixture.origin == ITEM_ORIGIN_SKIPPED ||
+                                   fixture.origin == ITEM_ORIGIN_REFUSED ||
+                                   fixture.origin == ITEM_ORIGIN_SUMMARIZED;
+        const struct item expected = {
+            .kind = is_tool_result
+                        ? ITEM_TOOL_RESULT
+                        : (fixture.origin == ITEM_ORIGIN_INTERRUPTED ? ITEM_ASSISTANT_MESSAGE
+                                                                     : ITEM_USER_MESSAGE),
+            .text = is_tool_result ? NULL : (char *)"marker",
+            .output = is_tool_result ? (char *)"marker" : NULL,
+            .origin = fixture.origin,
+        };
+        expect_item_fixture(fixture.json, &expected);
+    }
 }
 
 static void test_recording_control(void)
@@ -863,7 +1001,7 @@ static void test_load_budgets_images_from_compaction_seed(void)
 
 int main(void)
 {
-    test_item_codec_round_trip();
+    test_item_codec_fixtures();
     test_recording_control();
     test_session_round_trip();
     test_reasoning_provenance_round_trip();

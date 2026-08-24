@@ -14,6 +14,8 @@ notes (see [docs/releasing.md](docs/releasing.md)).
   interfaces.
 - Pin the header-only Glaze v8.1.0 JSON dependency to a verified Meson source archive and expose
   it only through the project-owned JSON adapter while preserving Jansson for existing paths.
+- Persist durable session items through typed Glaze records while retaining the existing session
+  format and canonical conversation item model.
 
 
 ## [0.4.0] - 2026-08-22

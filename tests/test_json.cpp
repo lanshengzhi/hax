@@ -63,6 +63,20 @@ static void test_type_error_is_project_error(void)
     EXPECT(hax::json::format_error(result.error()).find("type error") != std::string::npos);
 }
 
+static void test_unknown_keys_are_explicitly_permissive(void)
+{
+    const std::string input = R"({"name":"Ada","count":3,"future":true})";
+    const auto strict = hax::json::parse<json_record>(input);
+    EXPECT(!strict.has_value());
+
+    const auto relaxed = hax::json::parse<json_record>(input, {.allow_unknown_keys = true});
+    EXPECT(relaxed.has_value());
+    if (relaxed) {
+        EXPECT(relaxed->name == "Ada");
+        EXPECT(relaxed->count == 3);
+    }
+}
+
 static void test_invalid_utf8_is_rejected(void)
 {
     std::string input = R"({"name":"Ada)";
@@ -134,6 +148,7 @@ int main(void)
     test_valid_parse_and_serialize();
     test_syntax_error_has_source_context();
     test_type_error_is_project_error();
+    test_unknown_keys_are_explicitly_permissive();
     test_invalid_utf8_is_rejected();
     test_trailing_data_is_rejected();
     test_input_bound_is_checked_before_parse();

@@ -2,7 +2,6 @@
 #ifndef HAX_SESSION_H
 #define HAX_SESSION_H
 
-#include <jansson.h>
 #include <stddef.h>
 
 #include "provider.h"
@@ -12,12 +11,6 @@
  * items or complete provider/model/effort/preset selection records. */
 
 #define SESSION_FORMAT_VERSION 1
-
-/* Returns a new JSON reference. NULL item fields are omitted. */
-json_t *item_to_json(const struct item *item);
-
-/* Zeroes and fills out with owned fields. Free with item_free. Returns -1 for an invalid kind. */
-int item_from_json(const json_t *object, struct item *out);
 
 /* Identity and the effective selection after applying every selection record. */
 struct session_meta {
