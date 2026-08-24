@@ -9,6 +9,7 @@
 #include "provider.h"
 #include "providers/anthropic.h"
 #include "providers/codex.h"
+#include "providers/openai_compat_json.h"
 #include "providers/openrouter.h"
 
 /* Provider catalog fixtures translate private response shapes into model_info. Missing fields stay
@@ -220,6 +221,32 @@ static void test_openrouter_probe_exact_model(void)
     model_info_clear(&absent);
 }
 
+static void test_openrouter_usage_adapters(void)
+{
+    auto key = hax::openai_compat_json::parse_openrouter_key_usage(
+        "{\"data\":{\"label\":\"team\",\"is_free_tier\":true,"
+        "\"usage\":1.25,\"limit\":10,\"limit_remaining\":8.75},"
+        "\"unknown\":\"ignored\"}");
+    EXPECT(key.has_value());
+    if (key) {
+        EXPECT(key->label.has_value());
+        if (key->label)
+            EXPECT_STR_EQ(key->label->c_str(), "team");
+        EXPECT(key->free_tier && *key->free_tier);
+        EXPECT(key->spent && *key->spent == 1.25);
+        EXPECT(key->limit && *key->limit == 10);
+        EXPECT(key->remaining && *key->remaining == 8.75);
+    }
+
+    auto credits = hax::openai_compat_json::parse_openrouter_credits(
+        "{\"data\":{\"total_credits\":20,\"total_usage\":3.5}}");
+    EXPECT(credits.has_value());
+    if (credits)
+        EXPECT(credits->total && *credits->total == 20 && credits->spent && *credits->spent == 3.5);
+
+    EXPECT(!hax::openai_compat_json::parse_openrouter_key_usage("{\"data\":[]}"));
+}
+
 static void test_openrouter_probe_url_encoding(void)
 {
     struct model_probe probe = {0};
@@ -386,6 +413,7 @@ int main(void)
     test_openrouter_effort_levels();
     test_openrouter_effort_metadata_states();
     test_openrouter_probe_exact_model();
+    test_openrouter_usage_adapters();
     test_openrouter_probe_url_encoding();
     test_codex_model_capabilities();
     test_codex_context_fallback();

@@ -131,6 +131,7 @@ sources = files(
     'src/providers/mock.cpp',
     'src/providers/openai.cpp',
     'src/providers/openai_common.cpp',
+    'src/providers/openai_compat_json.cpp',
     'src/providers/opencode.cpp',
     'src/providers/openrouter.cpp',
     'src/providers/recipes.cpp',

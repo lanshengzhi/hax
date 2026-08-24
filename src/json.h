@@ -174,6 +174,21 @@ std::expected<std::string, error> serialize(const T &value, options options = {}
     return std::move(*encoded);
 }
 
+/* Provider request strings may contain arbitrary user or tool text. Enable strict JSON escaping
+ * before the result crosses a C-library parser, while keeping the faster default for trusted
+ * internal records. */
+template <typename T>
+std::expected<std::string, error> serialize_escaped(const T &value, options options = {})
+{
+    struct escaped_write_options : glz::opts {
+        bool escape_control_characters = true;
+    };
+    auto encoded = glz::write<escaped_write_options{}>(value);
+    if (!encoded)
+        return std::unexpected(detail::from_write_error(encoded.error(), options));
+    return std::move(*encoded);
+}
+
 } // namespace hax::json
 
 #endif /* HAX_JSON_H */

@@ -15,6 +15,7 @@
 #include "util.h"
 #include "providers/config_provider.h"
 #include "providers/http_provider.h"
+#include "providers/openai_compat_json.h"
 #include "providers/wire.h"
 #include "transport/http.h"
 
@@ -82,80 +83,11 @@ char *llamacpp_props_url(const char *base_url, const char *model)
     return result;
 }
 
-static int entry_names_model(const json_t *entry, const char *model)
-{
-    const char *id = json_string_value(json_object_get(entry, "id"));
-    if (id && strcmp(id, model) == 0)
-        return 1;
-    json_t *aliases = json_object_get(entry, "aliases");
-    size_t alias_count = json_is_array(aliases) ? json_array_size(aliases) : 0;
-    for (size_t i = 0; i < alias_count; i++) {
-        const char *alias = json_string_value(json_array_get(aliases, i));
-        if (alias && strcmp(alias, model) == 0)
-            return 1;
-    }
-    return 0;
-}
-
 int llamacpp_reconcile_model(const char *body, const char *configured_model,
                              struct llamacpp_reconcile *decision)
 {
-    memset(decision, 0, sizeof(*decision));
-    json_t *root = json_loads(body, 0, NULL);
-    json_t *models = root ? json_object_get(root, "data") : NULL;
-    if (!json_is_array(models)) {
-        json_decref(root);
-        return -1;
-    }
-
-    int configured = configured_model && *configured_model;
-    const char *first_model = NULL;
-    const char *running_model = NULL;
-    const char *configured_id = NULL;
-    size_t running_count = 0;
-    int router = 0;
-
-    size_t model_count = json_array_size(models);
-    for (size_t i = 0; i < model_count; i++) {
-        json_t *entry = json_array_get(models, i);
-        const char *served_model = json_string_value(json_object_get(entry, "id"));
-        if (!served_model)
-            continue;
-        if (!first_model)
-            first_model = served_model;
-        json_t *status = json_object_get(entry, "status");
-        if (json_is_object(status)) {
-            router = 1;
-            /* llama.cpp's running states: a loading model is committed and counts. */
-            const char *state = json_string_value(json_object_get(status, "value"));
-            if (state && (strcmp(state, "loaded") == 0 || strcmp(state, "loading") == 0 ||
-                          strcmp(state, "sleeping") == 0)) {
-                running_model = served_model;
-                running_count++;
-            }
-        }
-        if (configured && !configured_id && entry_names_model(entry, configured_model))
-            configured_id = served_model;
-    }
-
-    if (!first_model) {
-        decision->no_models = 1;
-    } else if (!configured) {
-        if (!router)
-            decision->replacement = xstrdup(first_model);
-        else if (running_count == 1)
-            decision->replacement = xstrdup(running_model);
-    } else if (!configured_id) {
-        if (router)
-            decision->clear_configured = 1;
-        else
-            decision->replacement = xstrdup(first_model);
-    } else if (strcmp(configured_id, configured_model) != 0) {
-        /* The picker and the session speak catalog ids, so normalize a configured alias. */
-        decision->canonical = xstrdup(configured_id);
-    }
-    json_decref(root);
-    return 0;
+    return hax::openai_compat_json::reconcile_llamacpp_model(body ? body : "", configured_model,
+                                                             decision);
 }
 
 char *llamacpp_model_warning(const char *configured_model, const char *served_model)
@@ -234,54 +166,15 @@ static int reconcile_configured_model(const char *base_url, const char *api_key,
  * servers omit these fields, leaving the capabilities unknown. */
 static void parse_props(const char *body, const char *model, struct model_info *model_info)
 {
-    (void)model;
-    json_t *root = json_loads(body, 0, NULL);
-    if (!root)
-        return;
-
-    json_t *settings = json_object_get(root, "default_generation_settings");
-    json_t *context = settings ? json_object_get(settings, "n_ctx") : NULL;
-    if (json_is_integer(context) && json_integer_value(context) > 0)
-        model_info->context = (long)json_integer_value(context);
-
-    json_t *modalities = json_object_get(root, "modalities");
-    json_t *vision = modalities ? json_object_get(modalities, "vision") : NULL;
-    if (json_is_boolean(vision))
-        model_info->image_input = json_is_true(vision) ? PROVIDER_CAP_YES : PROVIDER_CAP_NO;
-    json_decref(root);
+    hax::openai_compat_json::parse_llamacpp_props(body ? body : "", model, model_info);
 }
 
 void llamacpp_parse_model(const json_t *entry, struct model_info *info)
 {
-    json_t *meta = json_object_get(entry, "meta");
-    json_t *context = meta ? json_object_get(meta, "n_ctx") : NULL;
-    if (json_is_integer(context) && json_integer_value(context) > 0)
-        info->context = (long)json_integer_value(context);
-
-    json_t *architecture = json_object_get(entry, "architecture");
-    json_t *modalities = architecture ? json_object_get(architecture, "input_modalities") : NULL;
-    if (json_is_array(modalities)) {
-        info->image_input = PROVIDER_CAP_NO;
-        size_t modality_count = json_array_size(modalities);
-        for (size_t i = 0; i < modality_count; i++) {
-            const char *modality = json_string_value(json_array_get(modalities, i));
-            if (modality && strcmp(modality, "image") == 0)
-                info->image_input = PROVIDER_CAP_YES;
-        }
-    }
-
-    /* Most router models sit unloaded; flag only the exceptions. A failed load reports as
-     * unloaded plus a failed marker and exit code. */
-    json_t *status = json_object_get(entry, "status");
-    const char *state = status ? json_string_value(json_object_get(status, "value")) : NULL;
-    if (status && json_is_true(json_object_get(status, "failed"))) {
-        json_t *exit_code = json_object_get(status, "exit_code");
-        info->description =
-            json_is_integer(exit_code)
-                ? xasprintf("failed (exit %lld)", (long long)json_integer_value(exit_code))
-                : xstrdup("failed");
-    } else if (state && strcmp(state, "unloaded") != 0) {
-        info->description = xstrdup(state);
+    char *encoded = entry ? json_dumps(entry, JSON_COMPACT) : NULL;
+    if (encoded) {
+        hax::openai_compat_json::parse_llamacpp_model(encoded, info);
+        free(encoded);
     }
 }
 

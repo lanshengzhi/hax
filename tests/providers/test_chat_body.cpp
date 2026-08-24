@@ -281,8 +281,10 @@ static void test_tool_result_image_followup(void)
     json_t *m1 = json_array_get(msgs, 1);
     json_t *m2 = json_array_get(msgs, 2);
     EXPECT_STR_EQ(json_string_value(json_object_get(m0, "role")), "tool");
+    EXPECT_STR_EQ(json_string_value(json_object_get(m0, "tool_call_id")), "c1");
     EXPECT(json_is_string(json_object_get(m0, "content")));
     EXPECT_STR_EQ(json_string_value(json_object_get(m1, "role")), "tool");
+    EXPECT_STR_EQ(json_string_value(json_object_get(m1, "tool_call_id")), "c2");
     EXPECT_STR_EQ(json_string_value(json_object_get(m2, "role")), "user");
     json_t *parts = json_object_get(m2, "content");
     EXPECT(json_is_array(parts));
@@ -301,6 +303,22 @@ static void test_tool_result_image_followup(void)
     EXPECT(content && strstr(content, "Read image x.png") != NULL);
     EXPECT(strstr(content, "[image:") != NULL);
     json_decref(msgs);
+}
+
+static void test_control_characters_remain_json_safe(void)
+{
+    char text[] = {'a', '\x01', 'b', '\0'};
+    struct item items[] = {{.kind = ITEM_USER_MESSAGE, .text = text}};
+    json_t *messages = chat_build_messages(NULL, items, 1, NULL, "openrouter", "m", -1);
+
+    EXPECT(json_array_size(messages) == 1);
+    const char *decoded =
+        json_string_value(json_object_get(json_array_get(messages, 0), "content"));
+    EXPECT(decoded != NULL);
+    if (decoded)
+        EXPECT(decoded[0] == 'a' && decoded[1] == '\x01' && decoded[2] == 'b' &&
+               decoded[3] == '\0');
+    json_decref(messages);
 }
 
 /* ---------- prompt cache breakpoints ---------- */
@@ -601,6 +619,7 @@ int main(void)
     test_reasoning_only_field_null_emits_nothing();
     test_reasoning_skipped_on_provenance_mismatch();
     test_tool_result_image_followup();
+    test_control_characters_remain_json_safe();
     test_cache_plan_follows_model_rates();
     test_build_body_composition();
     test_build_body_minimal_opts();

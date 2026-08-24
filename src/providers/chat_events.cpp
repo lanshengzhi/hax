@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/chat_events.h"
 
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 
 #include "provider.h"
 #include "util.h"
+#include "providers/openai_compat_json.h"
 
 void chat_events_init(struct chat_events *parser, stream_cb callback, void *callback_user)
 {
@@ -42,26 +43,8 @@ void chat_events_free(struct chat_events *parser)
     parser->served_model = NULL;
     free(parser->route);
     parser->route = NULL;
-    json_decref(parser->reasoning_details);
-    parser->reasoning_details = NULL;
-}
-
-static void capture_first_string(char **field, const json_t *root, const char *key)
-{
-    if (*field)
-        return;
-    const char *value = json_string_value(json_object_get(root, key));
-    if (value && *value)
-        *field = xstrdup(value);
-}
-
-/* `provider` is OpenRouter's name for the upstream endpoint it routed to; plain OpenAI-compatible
- * servers omit it. */
-static void capture_response(struct chat_events *parser, json_t *root)
-{
-    capture_first_string(&parser->response_id, root, "id");
-    capture_first_string(&parser->served_model, root, "model");
-    capture_first_string(&parser->route, root, "provider");
+    free(parser->reasoning_details_json);
+    parser->reasoning_details_json = NULL;
 }
 
 static struct stream_response response_of(const struct chat_events *parser)
@@ -106,6 +89,17 @@ static void emit_event(struct chat_events *parser, const struct stream_event *ev
     parser->callback(event, parser->callback_user);
 }
 
+static void capture_response(struct chat_events *parser,
+                             const hax::openai_compat_json::chat_chunk &chunk)
+{
+    if (!parser->response_id && chunk.id && !chunk.id->empty())
+        parser->response_id = xstrdup(chunk.id->c_str());
+    if (!parser->served_model && chunk.model && !chunk.model->empty())
+        parser->served_model = xstrdup(chunk.model->c_str());
+    if (!parser->route && chunk.provider && !chunk.provider->empty())
+        parser->route = xstrdup(chunk.provider->c_str());
+}
+
 static void start_tool_call(struct chat_events *parser, struct chat_tool_call *call)
 {
     if (call->started || !call->name)
@@ -148,80 +142,37 @@ static void handle_text_delta(struct chat_events *parser, const char *text)
     emit_event(parser, &event);
 }
 
-static void handle_reasoning_delta(struct chat_events *parser, json_t *delta)
+static void handle_reasoning_delta(struct chat_events *parser,
+                                   const hax::openai_compat_json::chat_delta &delta)
 {
-    const char *text = json_string_value(json_object_get(delta, "reasoning"));
+    const std::string *text = delta.reasoning ? &*delta.reasoning : NULL;
     if (!text)
-        text = json_string_value(json_object_get(delta, "reasoning_content"));
-    if (!text || !*text)
+        text = delta.reasoning_content ? &*delta.reasoning_content : NULL;
+    if (!text || text->empty())
         return;
 
     struct stream_event event = {
         .kind = EV_REASONING_DELTA,
-        .u = {.reasoning_delta = {.text = text}},
+        .u = {.reasoning_delta = {.text = text->c_str()}},
     };
     emit_event(parser, &event);
 }
 
-static int is_reasoning_text(const json_t *detail)
+/* Reasoning arrives as an ordered sequence of opaque blocks. The adapter joins only adjacent text
+ * fragments and keeps all other provider fields intact before the item crosses the stream seam. */
+static void collect_reasoning_details(struct chat_events *parser,
+                                      const hax::openai_compat_json::chat_delta &delta)
 {
-    const char *type = json_string_value(json_object_get(detail, "type"));
-    return type && strcmp(type, "reasoning.text") == 0;
-}
-
-/* Absent, null and empty all mean the fragment did not carry the member. */
-static int has_member(const json_t *detail, const char *name)
-{
-    json_t *value = json_object_get(detail, name);
-    const char *text = json_string_value(value);
-    return value && !json_is_null(value) && (!text || *text);
-}
-
-/* A streamed block is chunked across fragments and closed by one carrying only its signature, a
- * shape no non-streamed response returns. Rejoining adjacent text restores that response's single
- * block, keeping the signature with the text it signs; replaying the fragments instead leaves the
- * signature on an empty block, which costs tokens and fails validation once a member is edited.
- * Only text chunks this way, so blocks of any other type stay whole and separate. */
-static int join_reasoning_text(json_t *block, json_t *detail)
-{
-    if (!is_reasoning_text(block) || !is_reasoning_text(detail))
-        return 0;
-
-    const char *tail = json_string_value(json_object_get(detail, "text"));
-    if (tail && *tail) {
-        const char *head = json_string_value(json_object_get(block, "text"));
-        char *joined = xasprintf("%s%s", head ? head : "", tail);
-        json_object_set_new(block, "text", json_string(joined));
-        free(joined);
-    }
-    static const char *const CLOSING[] = {"signature", "format"};
-    for (size_t i = 0; i < sizeof(CLOSING) / sizeof(CLOSING[0]); i++)
-        if (has_member(detail, CLOSING[i]) && !has_member(block, CLOSING[i]))
-            json_object_set(block, CLOSING[i], json_object_get(detail, CLOSING[i]));
-    return 1;
-}
-
-/* Reasoning arrives as an ordered sequence of typed blocks that the backend requires back
- * unchanged and in order, so blocks are neither reordered nor dropped here. */
-static void collect_reasoning_details(struct chat_events *parser, json_t *delta)
-{
-    json_t *details = json_object_get(delta, "reasoning_details");
-    if (!json_is_array(details))
+    if (!delta.has_reasoning_details)
         return;
 
-    if (!parser->reasoning_details)
-        parser->reasoning_details = json_array();
-    size_t index;
-    json_t *detail;
-    json_array_foreach(details, index, detail)
-    {
-        if (!json_is_object(detail))
+    for (const std::string &detail : delta.reasoning_details) {
+        char *joined = hax::openai_compat_json::append_reasoning_detail(
+            parser->reasoning_details_json, detail);
+        if (!joined)
             continue;
-        size_t collected = json_array_size(parser->reasoning_details);
-        json_t *last =
-            collected > 0 ? json_array_get(parser->reasoning_details, collected - 1) : NULL;
-        if (!last || !join_reasoning_text(last, detail))
-            json_array_append_new(parser->reasoning_details, json_deep_copy(detail));
+        free(parser->reasoning_details_json);
+        parser->reasoning_details_json = joined;
     }
 }
 
@@ -229,54 +180,42 @@ static void collect_reasoning_details(struct chat_events *parser, json_t *delta)
  * seam that follows it: content, a tool call, or the end of the stream. */
 static void flush_reasoning_details(struct chat_events *parser)
 {
-    if (!parser->reasoning_details)
-        return;
-
-    char *json = json_array_size(parser->reasoning_details) > 0
-                     ? json_dumps(parser->reasoning_details, JSON_COMPACT)
-                     : NULL;
-    json_decref(parser->reasoning_details);
-    parser->reasoning_details = NULL;
-    if (!json)
+    if (!parser->reasoning_details_json)
         return;
 
     struct stream_event event = {
         .kind = EV_REASONING_ITEM,
-        .u = {.reasoning_item = {.json = json}},
+        .u = {.reasoning_item = {.json = parser->reasoning_details_json}},
     };
     emit_event(parser, &event);
-    free(json);
+    free(parser->reasoning_details_json);
+    parser->reasoning_details_json = NULL;
 }
 
-static void handle_tool_call_delta(struct chat_events *parser, json_t *delta)
+static void handle_tool_call_delta(struct chat_events *parser,
+                                   const hax::openai_compat_json::chat_tool_call_delta &delta)
 {
     /* The specification requires index, but single-call compatible streams often omit it. */
-    json_t *index_value = json_object_get(delta, "index");
-    int index = json_is_integer(index_value) ? (int)json_integer_value(index_value) : 0;
+    int index = delta.index ? (int)*delta.index : 0;
     struct chat_tool_call *call = get_tool_call(parser, index);
 
-    const char *id = json_string_value(json_object_get(delta, "id"));
-    if (id && !call->id)
-        call->id = xstrdup(id);
-
-    json_t *function = json_object_get(delta, "function");
-    const char *name = json_string_value(json_object_get(function, "name"));
-    if (name && !call->name)
-        call->name = xstrdup(name);
+    if (delta.id && !call->id)
+        call->id = xstrdup(delta.id->c_str());
+    if (delta.name && !call->name)
+        call->name = xstrdup(delta.name->c_str());
 
     start_tool_call(parser, call);
 
-    const char *arguments = json_string_value(json_object_get(function, "arguments"));
-    if (!arguments || !*arguments)
+    if (!delta.arguments || delta.arguments->empty())
         return;
     if (!call->started) {
-        buf_append_str(&call->arguments_before_start, arguments);
+        buf_append_str(&call->arguments_before_start, delta.arguments->c_str());
         return;
     }
 
     struct stream_event event = {
         .kind = EV_TOOL_CALL_DELTA,
-        .u = {.tool_call_delta = {.id = call->id, .args_delta = arguments}},
+        .u = {.tool_call_delta = {.id = call->id, .args_delta = delta.arguments->c_str()}},
     };
     emit_event(parser, &event);
 }
@@ -297,62 +236,44 @@ static void finish_tool_calls(struct chat_events *parser)
     }
 }
 
-static void capture_usage(struct chat_events *parser, json_t *root)
+static void capture_usage(struct chat_events *parser,
+                          const std::optional<hax::openai_compat_json::chat_usage> &usage)
 {
-    json_t *usage = json_object_get(root, "usage");
-    if (!json_is_object(usage))
+    if (!usage)
         return;
 
-    json_t *value = json_object_get(usage, "prompt_tokens");
-    if (json_is_integer(value))
-        parser->usage.input_tokens = (long)json_integer_value(value);
-
-    value = json_object_get(usage, "completion_tokens");
-    if (json_is_integer(value))
-        parser->usage.output_tokens = (long)json_integer_value(value);
-
-    json_t *details = json_object_get(usage, "prompt_tokens_details");
-    if (json_is_object(details)) {
-        value = json_object_get(details, "cached_tokens");
-        if (json_is_integer(value))
-            parser->usage.cached_tokens = (long)json_integer_value(value);
-
-        value = json_object_get(details, "cache_write_tokens");
-        if (json_is_integer(value)) {
-            parser->usage.cache_write_tokens = (long)json_integer_value(value);
-            /* The response does not identify the TTL; only the request does. */
-            if (parser->cache_write_1h)
-                parser->usage.cache_write_1h_tokens = parser->usage.cache_write_tokens;
-        }
+    if (usage->prompt_tokens)
+        parser->usage.input_tokens = *usage->prompt_tokens;
+    if (usage->completion_tokens)
+        parser->usage.output_tokens = *usage->completion_tokens;
+    if (usage->cached_tokens)
+        parser->usage.cached_tokens = *usage->cached_tokens;
+    if (usage->cache_write_tokens) {
+        parser->usage.cache_write_tokens = *usage->cache_write_tokens;
+        /* The response does not identify the TTL; only the request does. */
+        if (parser->cache_write_1h)
+            parser->usage.cache_write_1h_tokens = *usage->cache_write_tokens;
     }
-
-    value = json_object_get(usage, "cost");
-    if (json_is_number(value) && json_number_value(value) >= 0)
-        parser->usage.cost = json_number_value(value);
+    if (usage->cost && *usage->cost >= 0)
+        parser->usage.cost = *usage->cost;
 }
 
-static void handle_progress(struct chat_events *parser, json_t *root)
+static void handle_progress(struct chat_events *parser,
+                            const std::optional<hax::openai_compat_json::chat_progress> &progress)
 {
-    if (!parser->emit_progress)
-        return;
-
-    json_t *progress = json_object_get(root, "prompt_progress");
-    if (!json_is_object(progress))
+    if (!parser->emit_progress || !progress)
         return;
 
     struct stream_event event = {
         .kind = EV_PROGRESS,
         .u = {.progress = {0}},
     };
-    json_t *value = json_object_get(progress, "processed");
-    if (json_is_integer(value))
-        event.u.progress.processed = (long)json_integer_value(value);
-    value = json_object_get(progress, "total");
-    if (json_is_integer(value))
-        event.u.progress.total = (long)json_integer_value(value);
-    value = json_object_get(progress, "cache");
-    if (json_is_integer(value))
-        event.u.progress.cache = (long)json_integer_value(value);
+    if (progress->processed)
+        event.u.progress.processed = *progress->processed;
+    if (progress->total)
+        event.u.progress.total = *progress->total;
+    if (progress->cache)
+        event.u.progress.cache = *progress->cache;
     emit_event(parser, &event);
 }
 
@@ -419,19 +340,20 @@ static void handle_done(struct chat_events *parser)
     emit_terminal_event(parser);
 }
 
-static void handle_error(struct chat_events *parser, json_t *error)
+static void handle_error(struct chat_events *parser,
+                         const hax::openai_compat_json::chat_error &error)
 {
     if (parser->terminal_emitted)
         return;
 
     parser->terminal_emitted = 1;
-    const char *message = json_string_value(json_object_get(error, "message"));
+    const char *message = error.message ? error.message->c_str() : "provider error";
     struct stream_response response = response_of(parser);
     struct stream_event event = {
         .kind = EV_ERROR,
         .u = {.error =
                   {
-                      .message = message ? message : "provider error",
+                      .message = message,
                       .http_status = 0,
                       .usage = &parser->usage,
                       .response = &response,
@@ -440,30 +362,25 @@ static void handle_error(struct chat_events *parser, json_t *error)
     emit_event(parser, &event);
 }
 
-static void handle_choice_delta(struct chat_events *parser, json_t *choice)
+static void handle_choice_delta(struct chat_events *parser,
+                                const hax::openai_compat_json::chat_choice &choice)
 {
-    json_t *delta = json_object_get(choice, "delta");
-    if (json_is_object(delta)) {
-        collect_reasoning_details(parser, delta);
-        handle_reasoning_delta(parser, delta);
+    if (choice.delta) {
+        collect_reasoning_details(parser, *choice.delta);
+        handle_reasoning_delta(parser, *choice.delta);
 
-        const char *content = json_string_value(json_object_get(delta, "content"));
-        json_t *tool_calls = json_object_get(delta, "tool_calls");
-        if ((content && *content) || json_is_array(tool_calls))
+        const char *content = choice.delta->content ? choice.delta->content->c_str() : NULL;
+        if ((content && *content) || choice.delta->has_tool_calls)
             flush_reasoning_details(parser);
 
         handle_text_delta(parser, content);
-
-        if (json_is_array(tool_calls)) {
-            size_t n_tool_calls = json_array_size(tool_calls);
-            for (size_t i = 0; i < n_tool_calls; i++)
-                handle_tool_call_delta(parser, json_array_get(tool_calls, i));
-        }
+        if (choice.delta->has_tool_calls)
+            for (const auto &tool_call : choice.delta->tool_calls)
+                handle_tool_call_delta(parser, tool_call);
     }
 
-    const char *finish_reason = json_string_value(json_object_get(choice, "finish_reason"));
-    if (finish_reason)
-        handle_finish_reason(parser, finish_reason);
+    if (choice.finish_reason)
+        handle_finish_reason(parser, choice.finish_reason->c_str());
 }
 
 void chat_events_feed(struct chat_events *parser, const char *data)
@@ -475,27 +392,21 @@ void chat_events_feed(struct chat_events *parser, const char *data)
         return;
     }
 
-    json_t *root = json_loads(data, 0, NULL);
-    if (!root)
+    auto chunk = hax::openai_compat_json::parse_chat_chunk(data);
+    if (!chunk)
         return;
 
-    json_t *error = json_object_get(root, "error");
-    if (json_is_object(error)) {
-        handle_error(parser, error);
-        json_decref(root);
+    if (chunk->error) {
+        handle_error(parser, *chunk->error);
         return;
     }
 
     /* Usage and progress chunks may have no choices. */
-    capture_response(parser, root);
-    capture_usage(parser, root);
-    handle_progress(parser, root);
-
-    json_t *choices = json_object_get(root, "choices");
-    if (json_is_array(choices) && json_array_size(choices) > 0)
-        handle_choice_delta(parser, json_array_get(choices, 0));
-
-    json_decref(root);
+    capture_response(parser, *chunk);
+    capture_usage(parser, chunk->usage);
+    handle_progress(parser, chunk->progress);
+    if (!chunk->choices.empty())
+        handle_choice_delta(parser, chunk->choices[0]);
 }
 
 void chat_events_finalize(struct chat_events *parser)

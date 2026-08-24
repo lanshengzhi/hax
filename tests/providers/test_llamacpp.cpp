@@ -6,6 +6,7 @@
 #include "harness.h"
 #include "provider.h"
 #include "providers/llamacpp.h"
+#include "providers/openai_compat_json.h"
 
 static const char MODELS_RESPONSE[] =
     "{\"data\": [{\"id\": 7}, {}, {\"id\": \"served-a\"}, {\"id\": \"served-b\"}]}";
@@ -197,6 +198,28 @@ static void test_parse_model_failed(void)
     json_decref(entry);
 }
 
+static void test_parse_props_adapter(void)
+{
+    struct model_info info;
+    model_info_init(&info);
+    hax::openai_compat_json::parse_llamacpp_props(
+        "{\"default_generation_settings\":{\"n_ctx\":32768},"
+        "\"modalities\":{\"vision\":true},\"new_field\":\"ignored\"}",
+        "served", &info);
+    EXPECT(info.context == 32768);
+    EXPECT(info.image_input == PROVIDER_CAP_YES);
+    model_info_clear(&info);
+
+    model_info_init(&info);
+    hax::openai_compat_json::parse_llamacpp_props(
+        "{\"default_generation_settings\":{\"n_ctx\":\"bad\"},"
+        "\"modalities\":{\"vision\":\"yes\"}}",
+        "served", &info);
+    EXPECT(info.context == 0);
+    EXPECT(info.image_input == PROVIDER_CAP_UNKNOWN);
+    model_info_clear(&info);
+}
+
 static void test_parse_model_single_mode(void)
 {
     json_t *entry = json_loads("{\"id\": \"model.gguf\", \"meta\": {\"n_ctx\": 4096}}", 0, NULL);
@@ -243,6 +266,7 @@ int main(void)
     test_parse_model();
     test_parse_model_idle_text_only();
     test_parse_model_failed();
+    test_parse_props_adapter();
     test_parse_model_single_mode();
     test_unscoped_props_url();
     test_model_scoped_props_url();

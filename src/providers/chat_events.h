@@ -2,7 +2,6 @@
 #ifndef HAX_PROVIDERS_CHAT_EVENTS_H
 #define HAX_PROVIDERS_CHAT_EVENTS_H
 
-#include <jansson.h>
 #include <stddef.h>
 
 #include "provider.h"
@@ -28,7 +27,7 @@ struct chat_events {
     size_t tool_call_capacity;
 
     /* Typed reasoning blocks collected since the last seam, awaiting an EV_REASONING_ITEM. */
-    json_t *reasoning_details;
+    char *reasoning_details_json;
 
     /* The terminal event waits for [DONE] so a trailing usage chunk can be included. */
     int finish_received;
