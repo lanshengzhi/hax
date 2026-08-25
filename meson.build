@@ -120,6 +120,7 @@ sources = files(
     'src/providers/anthropic.cpp',
     'src/providers/anthropic_body.cpp',
     'src/providers/anthropic_events.cpp',
+    'src/providers/anthropic_json.cpp',
     'src/providers/chat_body.cpp',
     'src/providers/chat_events.cpp',
     'src/providers/codex.cpp',

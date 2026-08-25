@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/anthropic_events.h"
 
-#include <jansson.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cstdlib>
+#include <cstring>
+#include <optional>
+#include <string>
 
 #include "provider.h"
 #include "util.h"
+#include "providers/anthropic_json.h"
 
 void anthropic_events_init(struct anthropic_events *parser, stream_cb callback, void *callback_user)
 {
@@ -87,89 +89,85 @@ static void emit_reasoning_start(struct anthropic_events *parser)
     emit(parser, &event);
 }
 
-static void handle_content_block_start(struct anthropic_events *parser, json_t *root)
+static void handle_content_block_start(struct anthropic_events *parser,
+                                       const hax::anthropic_json::parsed_event &event)
 {
-    json_t *index_value = json_object_get(root, "index");
-    int index = json_is_integer(index_value) ? (int)json_integer_value(index_value) : 0;
-    json_t *content = json_object_get(root, "content_block");
-    const char *type = json_string_value(json_object_get(content, "type"));
-    if (!type)
+    const int index = event.index ? (int)*event.index : 0;
+    if (!event.content_block || !event.content_block->type)
         return;
 
+    const std::string &type = *event.content_block->type;
     struct anthropic_content_block *block = find_block(parser, index);
     if (!block)
         block = add_block(parser, index);
 
-    if (strcmp(type, "text") == 0) {
+    if (type == "text") {
         block->kind = ANTHROPIC_CONTENT_TEXT;
-    } else if (strcmp(type, "thinking") == 0) {
+    } else if (type == "thinking") {
         block->kind = ANTHROPIC_CONTENT_THINKING;
         emit_reasoning_start(parser);
-    } else if (strcmp(type, "redacted_thinking") == 0) {
+    } else if (type == "redacted_thinking") {
         block->kind = ANTHROPIC_CONTENT_REDACTED_THINKING;
-        const char *data = json_string_value(json_object_get(content, "data"));
+        const std::string *data = event.content_block->data ? &*event.content_block->data : NULL;
         if (data)
-            block->redacted_data = xstrdup(data);
+            block->redacted_data = xstrdup(data->c_str());
         emit_reasoning_start(parser);
-    } else if (strcmp(type, "tool_use") == 0) {
+    } else if (type == "tool_use") {
         block->kind = ANTHROPIC_CONTENT_TOOL_USE;
-        const char *id = json_string_value(json_object_get(content, "id"));
-        const char *name = json_string_value(json_object_get(content, "name"));
-        block->tool_call_id = xstrdup(id ? id : "");
-        block->tool_name = xstrdup(name ? name : "");
-        struct stream_event event = {
+        const std::string *id = event.content_block->id ? &*event.content_block->id : NULL;
+        const std::string *name = event.content_block->name ? &*event.content_block->name : NULL;
+        block->tool_call_id = xstrdup(id ? id->c_str() : "");
+        block->tool_name = xstrdup(name ? name->c_str() : "");
+        struct stream_event start = {
             .kind = EV_TOOL_CALL_START,
             .u = {.tool_call_start = {.id = block->tool_call_id, .name = block->tool_name}},
         };
-        emit(parser, &event);
+        emit(parser, &start);
         block->tool_started = 1;
     } else {
         block->kind = ANTHROPIC_CONTENT_OTHER;
     }
 }
 
-static void handle_content_block_delta(struct anthropic_events *parser, json_t *root)
+static void handle_content_block_delta(struct anthropic_events *parser,
+                                       const hax::anthropic_json::parsed_event &event)
 {
-    json_t *index_value = json_object_get(root, "index");
-    int index = json_is_integer(index_value) ? (int)json_integer_value(index_value) : 0;
-    json_t *delta = json_object_get(root, "delta");
-    const char *type = json_string_value(json_object_get(delta, "type"));
-    if (!type)
+    const int index = event.index ? (int)*event.index : 0;
+    if (!event.delta || !event.delta->type)
         return;
 
+    const hax::anthropic_json::parsed_delta &delta = *event.delta;
+    const std::string &type = *delta.type;
     struct anthropic_content_block *block = find_block(parser, index);
-    if (strcmp(type, "text_delta") == 0) {
-        const char *text = json_string_value(json_object_get(delta, "text"));
-        if (text && *text) {
-            struct stream_event event = {
+    if (type == "text_delta") {
+        if (delta.text && !delta.text->empty()) {
+            struct stream_event text = {
                 .kind = EV_TEXT_DELTA,
-                .u = {.text_delta = {.text = text}},
+                .u = {.text_delta = {.text = delta.text->c_str()}},
             };
-            emit(parser, &event);
+            emit(parser, &text);
         }
-    } else if (strcmp(type, "thinking_delta") == 0) {
-        const char *text = json_string_value(json_object_get(delta, "thinking"));
-        if (text && *text) {
+    } else if (type == "thinking_delta") {
+        if (delta.thinking && !delta.thinking->empty()) {
             if (block)
-                buf_append_str(&block->thinking, text);
-            struct stream_event event = {
+                buf_append_str(&block->thinking, delta.thinking->c_str());
+            struct stream_event reasoning = {
                 .kind = EV_REASONING_DELTA,
-                .u = {.reasoning_delta = {.text = text}},
+                .u = {.reasoning_delta = {.text = delta.thinking->c_str()}},
             };
-            emit(parser, &event);
+            emit(parser, &reasoning);
         }
-    } else if (strcmp(type, "signature_delta") == 0) {
-        const char *signature = json_string_value(json_object_get(delta, "signature"));
-        if (signature && *signature && block)
-            buf_append_str(&block->signature, signature);
-    } else if (strcmp(type, "input_json_delta") == 0) {
-        const char *partial_json = json_string_value(json_object_get(delta, "partial_json"));
-        if (partial_json && *partial_json && block && block->tool_started) {
-            struct stream_event event = {
+    } else if (type == "signature_delta") {
+        if (delta.signature && !delta.signature->empty() && block)
+            buf_append_str(&block->signature, delta.signature->c_str());
+    } else if (type == "input_json_delta") {
+        if (delta.partial_json && !delta.partial_json->empty() && block && block->tool_started) {
+            struct stream_event arguments = {
                 .kind = EV_TOOL_CALL_DELTA,
-                .u = {.tool_call_delta = {.id = block->tool_call_id, .args_delta = partial_json}},
+                .u = {.tool_call_delta = {.id = block->tool_call_id,
+                                          .args_delta = delta.partial_json->c_str()}},
             };
-            emit(parser, &event);
+            emit(parser, &arguments);
         }
     }
 }
@@ -178,49 +176,42 @@ static void handle_content_block_delta(struct anthropic_events *parser, json_t *
 static void emit_reasoning_item(struct anthropic_events *parser,
                                 struct anthropic_content_block *block)
 {
-    json_t *object = NULL;
+    std::optional<std::string> encoded;
     if (block->kind == ANTHROPIC_CONTENT_REDACTED_THINKING) {
         if (!block->redacted_data)
             return;
-        object = json_pack("{s:s, s:s}", "type", "redacted_thinking", "data", block->redacted_data);
+        encoded = hax::anthropic_json::encode_redacted_thinking_item(block->redacted_data);
     } else {
         const char *text = block->thinking.data ? block->thinking.data : "";
         const char *signature = block->signature.data ? block->signature.data : "";
         if (!*text && !*signature)
             return;
-        object = json_pack("{s:s, s:s, s:s}", "type", "thinking", "thinking", text, "signature",
-                           signature);
+        encoded = hax::anthropic_json::encode_thinking_item(text, signature);
     }
-    if (!object)
-        return;
-
-    char *json = json_dumps(object, JSON_COMPACT);
-    json_decref(object);
-    if (!json)
+    if (!encoded)
         return;
 
     struct stream_event event = {
         .kind = EV_REASONING_ITEM,
-        .u = {.reasoning_item = {.json = json}},
+        .u = {.reasoning_item = {.json = encoded->c_str()}},
     };
     emit(parser, &event);
-    free(json);
 }
 
-static void handle_content_block_stop(struct anthropic_events *parser, json_t *root)
+static void handle_content_block_stop(struct anthropic_events *parser,
+                                      const hax::anthropic_json::parsed_event &event)
 {
-    json_t *index_value = json_object_get(root, "index");
-    int index = json_is_integer(index_value) ? (int)json_integer_value(index_value) : 0;
+    const int index = event.index ? (int)*event.index : 0;
     struct anthropic_content_block *block = find_block(parser, index);
     if (!block)
         return;
 
     if (block->kind == ANTHROPIC_CONTENT_TOOL_USE && block->tool_started) {
-        struct stream_event event = {
+        struct stream_event end = {
             .kind = EV_TOOL_CALL_END,
             .u = {.tool_call_end = {.id = block->tool_call_id}},
         };
-        emit(parser, &event);
+        emit(parser, &end);
     } else if (block->kind == ANTHROPIC_CONTENT_THINKING ||
                block->kind == ANTHROPIC_CONTENT_REDACTED_THINKING) {
         emit_reasoning_item(parser, block);
@@ -228,67 +219,50 @@ static void handle_content_block_stop(struct anthropic_events *parser, json_t *r
 }
 
 /* Anthropic reports cached input in addition to input_tokens, not as a subset of it. */
-static void capture_usage(struct anthropic_events *parser, json_t *usage)
+static void capture_usage(struct anthropic_events *parser,
+                          const hax::anthropic_json::parsed_usage *usage)
 {
-    if (!json_is_object(usage))
+    if (!usage)
         return;
 
-    long input_tokens = -1;
-    long cache_read_tokens = -1;
-    long cache_write_tokens = -1;
-    long output_tokens = -1;
-    json_t *value;
-    if (json_is_integer(value = json_object_get(usage, "input_tokens")))
-        input_tokens = (long)json_integer_value(value);
-    if (json_is_integer(value = json_object_get(usage, "cache_read_input_tokens")))
-        cache_read_tokens = (long)json_integer_value(value);
-    if (json_is_integer(value = json_object_get(usage, "cache_creation_input_tokens")))
-        cache_write_tokens = (long)json_integer_value(value);
-    if (json_is_integer(value = json_object_get(usage, "output_tokens")))
-        output_tokens = (long)json_integer_value(value);
-
-    if (input_tokens >= 0) {
-        parser->usage.input_tokens = input_tokens;
-        if (cache_read_tokens > 0)
-            parser->usage.input_tokens += cache_read_tokens;
-        if (cache_write_tokens > 0)
-            parser->usage.input_tokens += cache_write_tokens;
+    if (usage->input_tokens && *usage->input_tokens >= 0) {
+        parser->usage.input_tokens = *usage->input_tokens;
+        if (usage->cache_read_input_tokens && *usage->cache_read_input_tokens > 0)
+            parser->usage.input_tokens += *usage->cache_read_input_tokens;
+        if (usage->cache_creation_input_tokens && *usage->cache_creation_input_tokens > 0)
+            parser->usage.input_tokens += *usage->cache_creation_input_tokens;
     }
-    if (cache_read_tokens >= 0)
-        parser->usage.cached_tokens = cache_read_tokens;
-    if (cache_write_tokens >= 0)
-        parser->usage.cache_write_tokens = cache_write_tokens;
-
-    json_t *cache_creation = json_object_get(usage, "cache_creation");
-    if (json_is_object(cache_creation) &&
-        json_is_integer(value = json_object_get(cache_creation, "ephemeral_1h_input_tokens"))) {
-        parser->usage.cache_write_1h_tokens = (long)json_integer_value(value);
-    }
-    if (output_tokens >= 0)
-        parser->usage.output_tokens = output_tokens;
+    if (usage->cache_read_input_tokens && *usage->cache_read_input_tokens >= 0)
+        parser->usage.cached_tokens = *usage->cache_read_input_tokens;
+    if (usage->cache_creation_input_tokens && *usage->cache_creation_input_tokens >= 0)
+        parser->usage.cache_write_tokens = *usage->cache_creation_input_tokens;
+    if (usage->cache_write_1h_input_tokens)
+        parser->usage.cache_write_1h_tokens = *usage->cache_write_1h_input_tokens;
+    if (usage->output_tokens && *usage->output_tokens >= 0)
+        parser->usage.output_tokens = *usage->output_tokens;
 }
 
-static void handle_message_start(struct anthropic_events *parser, json_t *root)
+static void handle_message_start(struct anthropic_events *parser,
+                                 const hax::anthropic_json::parsed_event &event)
 {
-    json_t *message = json_object_get(root, "message");
-    const char *id = json_string_value(json_object_get(message, "id"));
-    if (id && *id && !parser->response_id)
-        parser->response_id = xstrdup(id);
-    const char *model = json_string_value(json_object_get(message, "model"));
-    if (model && *model && !parser->served_model)
-        parser->served_model = xstrdup(model);
-    capture_usage(parser, json_object_get(message, "usage"));
+    if (!event.message)
+        return;
+    const hax::anthropic_json::parsed_message &message = *event.message;
+    if (message.id && !message.id->empty() && !parser->response_id)
+        parser->response_id = xstrdup(message.id->c_str());
+    if (message.model && !message.model->empty() && !parser->served_model)
+        parser->served_model = xstrdup(message.model->c_str());
+    capture_usage(parser, message.usage ? &*message.usage : NULL);
 }
 
-static void handle_message_delta(struct anthropic_events *parser, json_t *root)
+static void handle_message_delta(struct anthropic_events *parser,
+                                 const hax::anthropic_json::parsed_event &event)
 {
-    json_t *delta = json_object_get(root, "delta");
-    const char *stop_reason = json_string_value(json_object_get(delta, "stop_reason"));
-    if (stop_reason) {
+    if (event.delta && event.delta->stop_reason) {
         free(parser->stop_reason);
-        parser->stop_reason = xstrdup(stop_reason);
+        parser->stop_reason = xstrdup(event.delta->stop_reason->c_str());
     }
-    capture_usage(parser, json_object_get(root, "usage"));
+    capture_usage(parser, event.usage ? &*event.usage : NULL);
 }
 
 static void emit_terminal_error(struct anthropic_events *parser, const char *message)
@@ -332,13 +306,15 @@ static void handle_message_stop(struct anthropic_events *parser)
     emit(parser, &event);
 }
 
-static void handle_error(struct anthropic_events *parser, json_t *root)
+static void handle_error(struct anthropic_events *parser,
+                         const hax::anthropic_json::parsed_event &event)
 {
     if (parser->terminal_emitted)
         return;
 
-    json_t *error = json_object_get(root, "error");
-    const char *message = json_string_value(json_object_get(error, "message"));
+    const char *message = NULL;
+    if (event.error && event.error->message)
+        message = event.error->message->c_str();
     emit_terminal_error(parser, message ? message : "provider error");
 }
 
@@ -349,31 +325,25 @@ void anthropic_events_feed(struct anthropic_events *parser, const char *event_na
     if (parser->terminal_emitted || !data || !*data)
         return;
 
-    json_t *root = json_loads(data, 0, NULL);
-    if (!root)
+    auto event = hax::anthropic_json::parse_event(data);
+    if (!event || !event->type)
         return;
 
-    const char *type = json_string_value(json_object_get(root, "type"));
-    if (!type)
-        goto out;
-
-    if (strcmp(type, "message_start") == 0)
-        handle_message_start(parser, root);
-    else if (strcmp(type, "content_block_start") == 0)
-        handle_content_block_start(parser, root);
-    else if (strcmp(type, "content_block_delta") == 0)
-        handle_content_block_delta(parser, root);
-    else if (strcmp(type, "content_block_stop") == 0)
-        handle_content_block_stop(parser, root);
-    else if (strcmp(type, "message_delta") == 0)
-        handle_message_delta(parser, root);
-    else if (strcmp(type, "message_stop") == 0)
+    const std::string &type = *event->type;
+    if (type == "message_start")
+        handle_message_start(parser, *event);
+    else if (type == "content_block_start")
+        handle_content_block_start(parser, *event);
+    else if (type == "content_block_delta")
+        handle_content_block_delta(parser, *event);
+    else if (type == "content_block_stop")
+        handle_content_block_stop(parser, *event);
+    else if (type == "message_delta")
+        handle_message_delta(parser, *event);
+    else if (type == "message_stop")
         handle_message_stop(parser);
-    else if (strcmp(type, "error") == 0)
-        handle_error(parser, root);
-
-out:
-    json_decref(root);
+    else if (type == "error")
+        handle_error(parser, *event);
 }
 
 void anthropic_events_finalize(struct anthropic_events *parser)

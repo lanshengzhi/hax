@@ -45,7 +45,8 @@ static void test_assistant_group_thinking_text_tool(void)
 {
     struct item items[] = {
         {.kind = ITEM_REASONING,
-         .reasoning_json = "{\"type\":\"thinking\",\"thinking\":\"reasoned\",\"signature\":\"S\"}",
+         .reasoning_json = "{\"type\":\"thinking\",\"thinking\":\"reasoned\",\"signature\":\"S\","
+                           "\"future\":{\"keep\":true}}",
          .provider = "anthropic",
          .model = "m"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "Running it."},
@@ -62,6 +63,7 @@ static void test_assistant_group_thinking_text_tool(void)
     EXPECT(json_array_size(blocks) == 3);
     EXPECT_STR_EQ(block_type(json_array_get(blocks, 0)), "thinking");
     EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(blocks, 0), "signature")), "S");
+    EXPECT(json_is_object(json_object_get(json_array_get(blocks, 0), "future")));
     EXPECT_STR_EQ(block_type(json_array_get(blocks, 1)), "text");
     json_t *tool_use = json_array_get(blocks, 2);
     EXPECT_STR_EQ(block_type(tool_use), "tool_use");

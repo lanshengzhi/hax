@@ -232,6 +232,31 @@ static void test_response_identity_from_message_start(void)
     EVENTS_FIXTURE_FREE(capture, parser);
 }
 
+static void test_unknown_keys_and_malformed_optional_members_are_ignored(void)
+{
+    EVENTS_FIXTURE(capture, parser);
+    FEED(parser, "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_x\","
+                 "\"model\":\"claude-x\",\"usage\":{\"input_tokens\":\"bad\","
+                 "\"cache_read_input_tokens\":7,\"future\":{\"keep\":true}}},"
+                 "\"future\":[]}");
+    FEED(parser, "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\","
+                 "\"future\":null},\"usage\":{\"output_tokens\":\"bad\","
+                 "\"cache_creation_input_tokens\":3,\"cache_creation\":{"
+                 "\"ephemeral_1h_input_tokens\":9,\"future\":false}}}");
+    FEED(parser, "{\"type\":\"message_stop\"}");
+
+    EXPECT(capture.n_events == 1);
+    EXPECT(capture.events[0].kind == EV_DONE);
+    EXPECT_STR_EQ(capture.events[0].response_id, "msg_x");
+    EXPECT_STR_EQ(capture.events[0].served_model, "claude-x");
+    EXPECT(capture.events[0].usage.input_tokens == -1);
+    EXPECT(capture.events[0].usage.cached_tokens == 7);
+    EXPECT(capture.events[0].usage.cache_write_tokens == 3);
+    EXPECT(capture.events[0].usage.cache_write_1h_tokens == 9);
+    EXPECT(capture.events[0].usage.output_tokens == -1);
+    EVENTS_FIXTURE_FREE(capture, parser);
+}
+
 static void test_usage_fragments_merge_at_done(void)
 {
     EVENTS_FIXTURE(capture, parser);
@@ -384,5 +409,6 @@ int main(void)
     test_finalize_after_done_no_extra();
     test_events_after_terminal_are_ignored();
     test_response_identity_from_message_start();
+    test_unknown_keys_and_malformed_optional_members_are_ignored();
     T_REPORT();
 }
