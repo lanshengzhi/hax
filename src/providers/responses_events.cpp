@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/responses_events.h"
 
-#include <jansson.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cstdlib>
+#include <cstring>
+#include <optional>
+#include <string>
 
 #include "provider.h"
 #include "util.h"
+#include "providers/responses_json.h"
 
 struct responses_tool_call {
     char *item_id;
@@ -98,194 +100,169 @@ static void add_tool_call(struct responses_events *events, const char *item_id, 
     tool_call->saw_args_delta = 0;
 }
 
-static void handle_output_item_added(struct responses_events *events, json_t *root)
+static void handle_output_item_added(struct responses_events *events,
+                                     const hax::responses_json::parsed_event &event)
 {
-    json_t *item = json_object_get(root, "item");
-    const char *type = json_string_value(json_object_get(item, "type"));
-    if (!type || strcmp(type, "function_call") != 0)
+    if (!event.item || !event.item->type || *event.item->type != "function_call")
         return;
 
-    const char *item_id = json_string_value(json_object_get(item, "id"));
-    const char *call_id = json_string_value(json_object_get(item, "call_id"));
-    const char *name = json_string_value(json_object_get(item, "name"));
-    if (!item_id || !call_id || !name)
+    const hax::responses_json::parsed_output_item &item = *event.item;
+    if (!item.id || !item.call_id || !item.name)
         return;
 
-    add_tool_call(events, item_id, call_id);
-    struct stream_event event = {
+    add_tool_call(events, item.id->c_str(), item.call_id->c_str());
+    struct stream_event stream_event = {
         .kind = EV_TOOL_CALL_START,
-        .u = {.tool_call_start = {.id = call_id, .name = name}},
+        .u = {.tool_call_start = {.id = item.call_id->c_str(), .name = item.name->c_str()}},
     };
-    emit_event(events, &event);
+    emit_event(events, &stream_event);
 }
 
-static void handle_tool_call_done(struct responses_events *events, json_t *item)
+static void handle_tool_call_done(struct responses_events *events,
+                                  const hax::responses_json::parsed_output_item &item)
 {
-    const char *item_id = json_string_value(json_object_get(item, "id"));
-    struct responses_tool_call *tool_call = find_tool_call(events, item_id);
+    struct responses_tool_call *tool_call =
+        find_tool_call(events, item.id ? item.id->c_str() : NULL);
     if (!tool_call)
         return;
 
     /* Some backends (OpenCode's Grok, for one) skip argument delta events and deliver the
      * complete arguments only on the item itself. */
-    const char *arguments = json_string_value(json_object_get(item, "arguments"));
-    if (!tool_call->saw_args_delta && arguments && *arguments) {
+    if (!tool_call->saw_args_delta && item.arguments && !item.arguments->empty()) {
         struct stream_event delta_event = {
             .kind = EV_TOOL_CALL_DELTA,
-            .u = {.tool_call_delta = {.id = tool_call->call_id, .args_delta = arguments}},
+            .u = {.tool_call_delta = {.id = tool_call->call_id,
+                                      .args_delta = item.arguments->c_str()}},
         };
         emit_event(events, &delta_event);
     }
 
-    struct stream_event event = {
+    struct stream_event stream_event = {
         .kind = EV_TOOL_CALL_END,
         .u = {.tool_call_end = {.id = tool_call->call_id}},
     };
-    emit_event(events, &event);
+    emit_event(events, &stream_event);
 }
 
-static void handle_reasoning_item_done(struct responses_events *events, json_t *item)
+static void handle_reasoning_item_done(struct responses_events *events,
+                                       const hax::responses_json::parsed_output_item &item)
 {
-    json_t *encrypted_content = json_object_get(item, "encrypted_content");
-    if (!encrypted_content || json_is_null(encrypted_content))
+    auto encoded = hax::responses_json::encode_reasoning_item(item);
+    if (!encoded)
         return;
 
-    /* Output item IDs and unknown output fields are not valid when replaying a reasoning item as
-     * Responses API input, so copy only the accepted input fields. */
-    json_t *input_item = json_object();
-    json_object_set_new(input_item, "type", json_string("reasoning"));
-    json_t *summary = json_object_get(item, "summary");
-    if (summary)
-        json_object_set(input_item, "summary", summary);
-    else
-        json_object_set_new(input_item, "summary", json_array());
-    json_object_set(input_item, "encrypted_content", encrypted_content);
-
-    char *json = json_dumps(input_item, JSON_COMPACT);
-    json_decref(input_item);
-    if (!json)
-        return;
-
-    struct stream_event event = {
+    struct stream_event stream_event = {
         .kind = EV_REASONING_ITEM,
-        .u = {.reasoning_item = {.json = json}},
+        .u = {.reasoning_item = {.json = encoded->c_str()}},
     };
-    emit_event(events, &event);
-    free(json);
+    emit_event(events, &stream_event);
 }
 
-static void handle_output_item_done(struct responses_events *events, json_t *root)
+static void handle_output_item_done(struct responses_events *events,
+                                    const hax::responses_json::parsed_event &event)
 {
-    json_t *item = json_object_get(root, "item");
-    const char *type = json_string_value(json_object_get(item, "type"));
-    if (!type)
+    if (!event.item || !event.item->type)
         return;
 
-    if (strcmp(type, "function_call") == 0)
-        handle_tool_call_done(events, item);
-    else if (strcmp(type, "reasoning") == 0)
-        handle_reasoning_item_done(events, item);
+    if (*event.item->type == "function_call")
+        handle_tool_call_done(events, *event.item);
+    else if (*event.item->type == "reasoning")
+        handle_reasoning_item_done(events, *event.item);
 }
 
-static void handle_text_delta(struct responses_events *events, json_t *root)
+static void handle_text_delta(struct responses_events *events,
+                              const hax::responses_json::parsed_event &event)
 {
-    const char *delta = json_string_value(json_object_get(root, "delta"));
-    if (!delta)
+    if (!event.delta)
         return;
 
-    struct stream_event event = {
+    struct stream_event stream_event = {
         .kind = EV_TEXT_DELTA,
-        .u = {.text_delta = {.text = delta}},
+        .u = {.text_delta = {.text = event.delta->c_str()}},
     };
-    emit_event(events, &event);
+    emit_event(events, &stream_event);
 }
 
 /* Reasoning summaries and raw reasoning stream as indexed parts with no separator on the wire,
  * so adjacent parts would render glued together. A hard line break puts each part on its own
  * line. Display-only: replay uses the opaque reasoning item, whose summary is copied verbatim,
  * so injected bytes never reach the provider. */
-static void emit_reasoning_part_break(struct responses_events *events, json_t *root)
+static void emit_reasoning_part_break(struct responses_events *events,
+                                      const hax::responses_json::parsed_event &event)
 {
-    const char *item_id = json_string_value(json_object_get(root, "item_id"));
-    json_t *index_value = json_object_get(root, "summary_index");
-    int is_content = 0;
-    if (!index_value) {
-        index_value = json_object_get(root, "content_index");
-        is_content = 1;
-    }
-    if (!item_id || !json_is_integer(index_value))
+    const std::string *item_id = event.item_id ? &*event.item_id : NULL;
+    const bool is_content = !event.summary_index_present;
+    const std::optional<long> &index_value = is_content ? event.content_index : event.summary_index;
+    if (!item_id || !index_value)
         return;
 
-    int part_index = (int)json_integer_value(index_value);
-    int same_item = events->reasoning_item_id && strcmp(events->reasoning_item_id, item_id) == 0;
+    const int part_index = (int)*index_value;
+    const int same_item =
+        events->reasoning_item_id && strcmp(events->reasoning_item_id, item_id->c_str()) == 0;
     /* A tracked previous part means no EV_REASONING_ITEM sealed it, so an item change needs an
      * injected boundary just like a part change: backends that return no encrypted content give
      * consumers no other seam between consecutive reasoning items. */
-    int part_changed =
+    const int part_changed =
         events->reasoning_item_id && (!same_item || part_index != events->reasoning_part_index ||
-                                      is_content != events->reasoning_part_is_content);
+                                      (int)is_content != events->reasoning_part_is_content);
     if (part_changed) {
-        struct stream_event event = {
+        struct stream_event stream_event = {
             .kind = EV_REASONING_DELTA,
             .u = {.reasoning_delta = {.text = "  \n"}},
         };
-        emit_event(events, &event);
+        emit_event(events, &stream_event);
     }
     if (!same_item) {
         free(events->reasoning_item_id);
-        events->reasoning_item_id = xstrdup(item_id);
+        events->reasoning_item_id = xstrdup(item_id->c_str());
     }
     events->reasoning_part_index = part_index;
     events->reasoning_part_is_content = is_content;
 }
 
-static void handle_reasoning_delta(struct responses_events *events, json_t *root)
+static void handle_reasoning_delta(struct responses_events *events,
+                                   const hax::responses_json::parsed_event &event)
 {
-    const char *delta = json_string_value(json_object_get(root, "delta"));
-    if (!delta || !*delta)
+    if (!event.delta || event.delta->empty())
         return;
 
-    emit_reasoning_part_break(events, root);
-    struct stream_event event = {
+    emit_reasoning_part_break(events, event);
+    struct stream_event stream_event = {
         .kind = EV_REASONING_DELTA,
-        .u = {.reasoning_delta = {.text = delta}},
+        .u = {.reasoning_delta = {.text = event.delta->c_str()}},
     };
-    emit_event(events, &event);
+    emit_event(events, &stream_event);
 }
 
-static void handle_tool_call_delta(struct responses_events *events, json_t *root)
+static void handle_tool_call_delta(struct responses_events *events,
+                                   const hax::responses_json::parsed_event &event)
 {
-    const char *item_id = json_string_value(json_object_get(root, "item_id"));
-    const char *delta = json_string_value(json_object_get(root, "delta"));
-    /* An empty delta carries nothing and must not count as streamed arguments, or it would
-     * defeat the completed-item fallback in handle_tool_call_done. */
-    if (!item_id || !delta || !*delta)
+    if (!event.item_id || !event.delta || event.delta->empty())
         return;
 
-    struct responses_tool_call *tool_call = find_tool_call(events, item_id);
+    struct responses_tool_call *tool_call = find_tool_call(events, event.item_id->c_str());
     if (!tool_call)
         return;
 
     tool_call->saw_args_delta = 1;
-    struct stream_event event = {
+    struct stream_event stream_event = {
         .kind = EV_TOOL_CALL_DELTA,
-        .u = {.tool_call_delta = {.id = tool_call->call_id, .args_delta = delta}},
+        .u = {.tool_call_delta = {.id = tool_call->call_id, .args_delta = event.delta->c_str()}},
     };
-    emit_event(events, &event);
+    emit_event(events, &stream_event);
 }
 
-static void capture_response(struct responses_events *events, json_t *root)
+static void capture_response(struct responses_events *events,
+                             const hax::responses_json::parsed_event &event)
 {
-    json_t *response = root ? json_object_get(root, "response") : NULL;
-    if (!json_is_object(response))
+    if (!event.response)
         return;
 
-    const char *id = json_string_value(json_object_get(response, "id"));
-    if (id && *id && !events->response_id)
-        events->response_id = xstrdup(id);
-    const char *model = json_string_value(json_object_get(response, "model"));
-    if (model && *model && !events->served_model)
-        events->served_model = xstrdup(model);
+    const hax::responses_json::parsed_response &response = *event.response;
+    if (response.id && !response.id->empty() && !events->response_id)
+        events->response_id = xstrdup(response.id->c_str());
+    if (response.model && !response.model->empty() && !events->served_model)
+        events->served_model = xstrdup(response.model->c_str());
 }
 
 static struct stream_response response_of(const struct responses_events *events)
@@ -295,87 +272,83 @@ static struct stream_response response_of(const struct responses_events *events)
 
 /* Usage arrives on terminal events under response.usage. A missing cached-token field is
  * unknown rather than a known cache miss. */
-static void parse_usage(json_t *root, struct stream_usage *usage)
+static void parse_usage(const hax::responses_json::parsed_event *event, struct stream_usage *usage)
 {
     init_usage(usage);
-
-    json_t *response = root ? json_object_get(root, "response") : NULL;
-    json_t *response_usage = json_object_get(response, "usage");
-    if (!json_is_object(response_usage))
+    if (!event || !event->response || !event->response->usage)
         return;
 
-    json_t *value = json_object_get(response_usage, "input_tokens");
-    if (json_is_integer(value))
-        usage->input_tokens = (long)json_integer_value(value);
-
-    value = json_object_get(response_usage, "output_tokens");
-    if (json_is_integer(value))
-        usage->output_tokens = (long)json_integer_value(value);
-
-    json_t *details = json_object_get(response_usage, "input_tokens_details");
-    value = json_object_get(details, "cached_tokens");
-    if (json_is_integer(value))
-        usage->cached_tokens = (long)json_integer_value(value);
+    const hax::responses_json::parsed_usage &response_usage = *event->response->usage;
+    if (response_usage.input_tokens)
+        usage->input_tokens = *response_usage.input_tokens;
+    if (response_usage.output_tokens)
+        usage->output_tokens = *response_usage.output_tokens;
+    if (response_usage.cached_tokens)
+        usage->cached_tokens = *response_usage.cached_tokens;
 }
 
-static void emit_terminal_error(struct responses_events *events, const char *message, json_t *root)
+static void emit_terminal_error(struct responses_events *events, const char *message,
+                                const hax::responses_json::parsed_event *event)
 {
     if (events->terminal_emitted)
         return;
 
     events->terminal_emitted = 1;
     struct stream_usage usage;
-    parse_usage(root, &usage);
+    parse_usage(event, &usage);
     struct stream_response response = response_of(events);
-    struct stream_event event = {
+    struct stream_event stream_event = {
         .kind = EV_ERROR,
         .u = {.error =
                   {.message = message, .http_status = 0, .usage = &usage, .response = &response}},
     };
-    emit_event(events, &event);
+    emit_event(events, &stream_event);
 }
 
-static void handle_failed(struct responses_events *events, json_t *root)
+static void handle_failed(struct responses_events *events,
+                          const hax::responses_json::parsed_event &event)
 {
-    json_t *response = json_object_get(root, "response");
-    json_t *error = json_object_get(response, "error");
-    const char *message = json_string_value(json_object_get(error, "message"));
-    emit_terminal_error(events, message ? message : "response.failed", root);
+    const char *message = NULL;
+    if (event.response && event.response->error_message)
+        message = event.response->error_message->c_str();
+    emit_terminal_error(events, message ? message : "response.failed", &event);
 }
 
 /* A bare `error` event carries the failure at the top level rather than under `response`, and no
  * terminal response event follows it. */
-static void handle_stream_error(struct responses_events *events, json_t *root)
+static void handle_stream_error(struct responses_events *events,
+                                const hax::responses_json::parsed_event &event)
 {
-    const char *message = json_string_value(json_object_get(root, "message"));
-    const char *code = json_string_value(json_object_get(root, "code"));
-    if (!message)
-        message = code;
-    emit_terminal_error(events, message ? message : "provider error", root);
+    const char *message = event.message ? event.message->c_str() : NULL;
+    if (!message && event.code)
+        message = event.code->c_str();
+    emit_terminal_error(events, message ? message : "provider error", &event);
 }
 
-static void handle_incomplete(struct responses_events *events, json_t *root)
+static void handle_incomplete(struct responses_events *events,
+                              const hax::responses_json::parsed_event &event)
 {
-    json_t *response = json_object_get(root, "response");
-    json_t *details = json_object_get(response, "incomplete_details");
-    const char *reason = json_string_value(json_object_get(details, "reason"));
+    const char *reason = event.response && event.response->incomplete_reason
+                             ? event.response->incomplete_reason->c_str()
+                             : NULL;
     char *message = xasprintf("response incomplete: %s", reason ? reason : "unknown");
-    emit_terminal_error(events, message, root);
+    emit_terminal_error(events, message, &event);
     free(message);
 }
 
-static void handle_completed(struct responses_events *events, json_t *root)
+static void handle_completed(struct responses_events *events,
+                             const hax::responses_json::parsed_event &event)
 {
     if (events->terminal_emitted)
         return;
 
     events->terminal_emitted = 1;
-    struct stream_event event = {
+    struct stream_event stream_event = {
         .kind = EV_DONE,
         .u = {.done = {.stop_reason = "completed", .response = response_of(events)}},
     };
-    parse_usage(root, &event.u.done.usage);
-    emit_event(events, &event);
+    parse_usage(&event, &stream_event.u.done.usage);
+    emit_event(events, &stream_event);
 }
 
 void responses_events_feed(struct responses_events *events, const char *data)
@@ -383,45 +356,38 @@ void responses_events_feed(struct responses_events *events, const char *data)
     if (!data || !*data)
         return;
     if (strcmp(data, "[DONE]") == 0) {
-        handle_completed(events, NULL);
+        handle_completed(events, hax::responses_json::parsed_event{});
         return;
     }
 
-    json_t *root = json_loads(data, 0, NULL);
-    if (!root)
+    auto event = hax::responses_json::parse_event(data);
+    if (!event || !event->type)
         return;
 
-    const char *type = json_string_value(json_object_get(root, "type"));
-    if (!type)
-        goto out;
+    capture_response(events, *event);
 
-    capture_response(events, root);
-
-    if (strcmp(type, "response.output_item.added") == 0)
-        handle_output_item_added(events, root);
-    else if (strcmp(type, "response.output_item.done") == 0)
-        handle_output_item_done(events, root);
+    const std::string &type = *event->type;
+    if (type == "response.output_item.added")
+        handle_output_item_added(events, *event);
+    else if (type == "response.output_item.done")
+        handle_output_item_done(events, *event);
     /* A refusal is the assistant's answer, carried in its own content part. Dropping it would
      * complete the response with no text at all. */
-    else if (strcmp(type, "response.output_text.delta") == 0 ||
-             strcmp(type, "response.refusal.delta") == 0)
-        handle_text_delta(events, root);
-    else if (strcmp(type, "response.reasoning_summary_text.delta") == 0 ||
-             strcmp(type, "response.reasoning_text.delta") == 0)
-        handle_reasoning_delta(events, root);
-    else if (strcmp(type, "response.function_call_arguments.delta") == 0)
-        handle_tool_call_delta(events, root);
-    else if (strcmp(type, "response.completed") == 0 || strcmp(type, "response.done") == 0)
-        handle_completed(events, root);
-    else if (strcmp(type, "response.incomplete") == 0)
-        handle_incomplete(events, root);
-    else if (strcmp(type, "response.failed") == 0)
-        handle_failed(events, root);
-    else if (strcmp(type, "error") == 0)
-        handle_stream_error(events, root);
-
-out:
-    json_decref(root);
+    else if (type == "response.output_text.delta" || type == "response.refusal.delta")
+        handle_text_delta(events, *event);
+    else if (type == "response.reasoning_summary_text.delta" ||
+             type == "response.reasoning_text.delta")
+        handle_reasoning_delta(events, *event);
+    else if (type == "response.function_call_arguments.delta")
+        handle_tool_call_delta(events, *event);
+    else if (type == "response.completed" || type == "response.done")
+        handle_completed(events, *event);
+    else if (type == "response.incomplete")
+        handle_incomplete(events, *event);
+    else if (type == "response.failed")
+        handle_failed(events, *event);
+    else if (type == "error")
+        handle_stream_error(events, *event);
 }
 
 void responses_events_finalize(struct responses_events *events)

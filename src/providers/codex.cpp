@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 #include <time.h>
 
 #include "busy.h"
@@ -15,6 +16,7 @@
 #include "util.h"
 #include "version.h"
 #include "providers/codex_auth.h"
+#include "providers/codex_json.h"
 #include "providers/codex_login.h"
 #include "providers/codex_settings.h"
 #include "providers/config_provider.h"
@@ -351,27 +353,7 @@ static char **build_model_headers(const struct codex *codex)
 static void parse_model_probe_response(const char *body, const char *model,
                                        struct model_info *model_info)
 {
-    json_t *root = json_loads(body, 0, NULL);
-    if (!root)
-        return;
-
-    json_t *models = json_object_get(root, "models");
-    if (!json_is_array(models)) {
-        json_decref(root);
-        return;
-    }
-
-    size_t i;
-    json_t *entry;
-    json_array_foreach(models, i, entry)
-    {
-        const char *slug = json_string_value(json_object_get(entry, "slug"));
-        if (slug && strcmp(slug, model) == 0) {
-            codex_parse_model(entry, model_info);
-            break;
-        }
-    }
-    json_decref(root);
+    hax::codex_json::parse_model_probe_response(body ? body : "", model ? model : "", model_info);
 }
 
 static int codex_probe_model(struct provider *provider, const char *model,
@@ -416,30 +398,28 @@ static void format_window_label(char *output, size_t output_size, long window_se
         snprintf(output, output_size, "%ldd", window_seconds / 86400);
 }
 
-static void print_usage_window(const char *fallback_label, json_t *window)
+static void print_usage_window(const char *fallback_label,
+                               const hax::codex_json::parsed_usage_window *window)
 {
-    if (!window || json_is_null(window))
+    if (!window)
         return;
 
-    json_t *used_percent = json_object_get(window, "used_percent");
-    json_t *reset_timestamp = json_object_get(window, "reset_at");
-    json_t *duration = json_object_get(window, "limit_window_seconds");
-    if (!json_is_number(used_percent) || !json_is_number(reset_timestamp)) {
+    if (!window->used_percent || !window->reset_at) {
         printf("  " ANSI_DIM "%-*s (unrecognized window shape)" ANSI_RESET "\n", USAGE_LABEL_WIDTH,
                fallback_label);
         return;
     }
 
     char label[32];
-    if (json_is_integer(duration))
-        format_window_label(label, sizeof(label), (long)json_integer_value(duration));
+    if (window->limit_window_seconds)
+        format_window_label(label, sizeof(label), *window->limit_window_seconds);
     else
         snprintf(label, sizeof(label), "%s", fallback_label);
 
     struct usage_window row = {
         .label = label,
-        .used_percent = json_number_value(used_percent),
-        .reset_at = (time_t)json_number_value(reset_timestamp),
+        .used_percent = *window->used_percent,
+        .reset_at = (time_t)*window->reset_at,
     };
     usage_window_print(&row);
 }
@@ -483,16 +463,15 @@ static int codex_query_usage(struct provider *provider)
         return -1;
     }
 
-    json_error_t error;
-    json_t *root = json_loads(body, 0, &error);
+    std::string parse_error;
+    auto usage = hax::codex_json::parse_usage(body ? body : "", &parse_error);
     free(body);
-    if (!root) {
-        ui_error("usage response is not valid JSON: %s", error.text);
+    if (!usage) {
+        ui_error("usage response is not valid JSON: %s", parse_error.c_str());
         return -1;
     }
 
-    const char *plan = json_string_value(json_object_get(root, "plan_type"));
-    json_t *rate_limit = json_object_get(root, "rate_limit");
+    const char *plan = usage->plan_type ? usage->plan_type->c_str() : NULL;
 
     printf(ANSI_DIM "codex");
     /* Email and plan arrive from the server (token claims and usage response); keep terminal
@@ -509,14 +488,12 @@ static int codex_query_usage(struct provider *provider)
     }
     printf(ANSI_RESET "\n");
 
-    if (rate_limit && !json_is_null(rate_limit)) {
-        print_usage_window("primary", json_object_get(rate_limit, "primary_window"));
-        print_usage_window("secondary", json_object_get(rate_limit, "secondary_window"));
+    if (usage->rate_limit_nonnull) {
+        print_usage_window("primary", usage->primary_window ? &*usage->primary_window : NULL);
+        print_usage_window("secondary", usage->secondary_window ? &*usage->secondary_window : NULL);
     } else {
         printf("  " ANSI_DIM "no rate-limit windows reported for this plan" ANSI_RESET "\n");
     }
-
-    json_decref(root);
     return 0;
 }
 
@@ -542,61 +519,41 @@ char *codex_model_catalog_error(long http_status, const char *token_expired)
     return xstrdup("could not reach chatgpt.com to list models — check your network");
 }
 
+static char *dump_catalog_entry(const json_t *entry)
+{
+    return entry ? json_dumps(entry, JSON_COMPACT) : NULL;
+}
+
 int codex_model_is_hidden(const json_t *entry)
 {
-    const char *visibility = json_string_value(json_object_get(entry, "visibility"));
-    return visibility && strcmp(visibility, "hide") == 0;
+    char *encoded = dump_catalog_entry(entry);
+    if (!encoded)
+        return 0;
+    const int hidden = hax::codex_json::model_is_hidden(encoded);
+    free(encoded);
+    return hidden;
 }
 
 void codex_parse_model(const json_t *entry, struct model_info *model)
 {
-    /* context_window is the served limit; max_context_window is only a fallback ceiling. */
-    json_t *context_window = json_object_get(entry, "context_window");
-    if (!json_is_integer(context_window) || json_integer_value(context_window) <= 0)
-        context_window = json_object_get(entry, "max_context_window");
-    if (json_is_integer(context_window) && json_integer_value(context_window) > 0)
-        model->context = (long)json_integer_value(context_window);
-
-    json_t *modalities = json_object_get(entry, "input_modalities");
-    if (json_is_array(modalities)) {
-        model->image_input = PROVIDER_CAP_NO;
-        for (size_t i = 0; i < json_array_size(modalities); i++) {
-            const char *modality = json_string_value(json_array_get(modalities, i));
-            if (modality && strcmp(modality, "image") == 0)
-                model->image_input = PROVIDER_CAP_YES;
-        }
-    }
-
-    const char *description = json_string_value(json_object_get(entry, "description"));
-    if (description && *description)
-        model->description = xstrdup(description);
-
-    codex_parse_model_efforts(entry, &model->efforts);
+    if (!model)
+        return;
+    char *encoded = dump_catalog_entry(entry);
+    if (!encoded)
+        return;
+    hax::codex_json::parse_model(encoded, model);
+    free(encoded);
 }
 
-/* The catalog describes the official UI ladder: it omits accepted value "none" and may include
- * policy label "ultra", which the wire rejects. An absent ladder is unknown; an empty one denies
- * every effort. */
 void codex_parse_model_efforts(const json_t *entry, struct effort_set *efforts)
 {
-    json_t *levels = json_object_get(entry, "supported_reasoning_levels");
-    if (!json_is_array(levels))
+    if (!efforts)
         return;
-
-    efforts->known = 1;
-    if (json_array_size(levels) == 0)
+    char *encoded = dump_catalog_entry(entry);
+    if (!encoded)
         return;
-
-    effort_set_add(efforts, "none");
-    for (size_t i = 0; i < json_array_size(levels); i++) {
-        json_t *level = json_array_get(levels, i);
-        /* Accept the bare-string variant used by older catalog responses. */
-        const char *effort = json_is_string(level)
-                                 ? json_string_value(level)
-                                 : json_string_value(json_object_get(level, "effort"));
-        if (effort && strcmp(effort, "ultra") != 0)
-            effort_set_add(efforts, effort);
-    }
+    hax::codex_json::parse_model_efforts(encoded, efforts);
+    free(encoded);
 }
 
 static int codex_list_models(struct provider *provider, struct model_info **models_out,
@@ -633,41 +590,35 @@ static int codex_list_models(struct provider *provider, struct model_info **mode
         return -1;
     }
 
-    json_t *root = json_loads(body, 0, NULL);
+    auto page = hax::codex_json::parse_model_page(body ? body : "");
     free(body);
-    if (!root) {
+    if (!page) {
         *error = xstrdup("codex model catalog response is not valid JSON");
         return -1;
     }
-
-    json_t *models = json_object_get(root, "models");
-    if (!json_is_array(models)) {
-        json_decref(root);
+    if (page->models_kind != hax::codex_json::model_page_models_kind::array) {
         *error = xstrdup("codex model catalog response has no model list");
         return -1;
     }
 
-    size_t entry_count = json_array_size(models);
+    const size_t entry_count = page->entries.size();
     struct model_info *listed_models =
         entry_count ? (model_info *)xmalloc(entry_count * sizeof(*listed_models)) : NULL;
     size_t listed_count = 0;
     size_t slug_count = 0;
-    for (size_t i = 0; i < entry_count; i++) {
-        json_t *entry = json_array_get(models, i);
-        const char *slug = json_string_value(json_object_get(entry, "slug"));
-        if (!slug || !*slug)
+    for (const hax::codex_json::parsed_model_entry &entry : page->entries) {
+        if (!entry.slug || entry.slug->empty())
             continue;
 
         slug_count++;
-        if (codex_model_is_hidden(entry))
+        if (hax::codex_json::model_is_hidden(entry.json))
             continue;
 
         model_info_init(&listed_models[listed_count]);
-        listed_models[listed_count].id = xstrdup(slug);
-        codex_parse_model(entry, &listed_models[listed_count]);
+        listed_models[listed_count].id = xstrdup(entry.slug->c_str());
+        hax::codex_json::parse_model(entry.json, &listed_models[listed_count]);
         listed_count++;
     }
-    json_decref(root);
 
     /* A catalog containing only hidden models is valid; one with entries but no slugs is not. */
     if (entry_count > 0 && slug_count == 0) {

@@ -467,13 +467,104 @@ static void test_reasoning_item_strips_unknown_fields(void)
     responses_events_feed(&fixture.parser, "{\"type\":\"response.output_item.done\",\"item\":"
                                            "{\"type\":\"reasoning\",\"id\":\"rs_1\","
                                            "\"status\":\"completed\",\"content\":[],"
-                                           "\"summary\":[],\"encrypted_content\":\"abc==\","
+                                           "\"summary\":[{\"future\":{\"keep\":true}}],"
+                                           "\"encrypted_content\":\"abc==\","
                                            "\"future_field\":\"xyz\"}}");
     EXPECT(fixture.capture.count == 1);
     EXPECT(strstr(fixture.capture.events[0].text, "\"status\"") == NULL);
     EXPECT(strstr(fixture.capture.events[0].text, "\"content\"") == NULL);
     EXPECT(strstr(fixture.capture.events[0].text, "\"future_field\"") == NULL);
     EXPECT(strstr(fixture.capture.events[0].text, "rs_1") == NULL);
+    EXPECT(strstr(fixture.capture.events[0].text, "\"future\":{\"keep\":true}") != NULL);
+    fixture_free(&fixture);
+}
+
+static void test_unknown_keys_and_malformed_optional_members_are_ignored(void)
+{
+    struct event_fixture fixture;
+    fixture_init(&fixture);
+    responses_events_feed(&fixture.parser, "{\"type\":\"response.created\",\"response\":{"
+                                           "\"id\":\"resp_x\",\"model\":\"gpt-x\","
+                                           "\"usage\":{\"input_tokens\":\"bad\","
+                                           "\"input_tokens_details\":{\"cached_tokens\":7}},"
+                                           "\"future\":[]},\"future\":null}");
+    responses_events_feed(&fixture.parser,
+                          "{\"type\":\"response.completed\",\"response\":{"
+                          "\"usage\":{\"input_tokens\":\"bad\",\"output_tokens\":\"bad\","
+                          "\"input_tokens_details\":{\"cached_tokens\":300}},"
+                          "\"future\":true}}");
+
+    EXPECT(fixture.capture.count == 1);
+    EXPECT(fixture.capture.events[0].kind == EV_DONE);
+    EXPECT_STR_EQ(fixture.capture.events[0].response_id, "resp_x");
+    EXPECT_STR_EQ(fixture.capture.events[0].served_model, "gpt-x");
+    EXPECT(fixture.capture.events[0].usage.input_tokens == -1);
+    EXPECT(fixture.capture.events[0].usage.output_tokens == -1);
+    EXPECT(fixture.capture.events[0].usage.cached_tokens == 300);
+    fixture_free(&fixture);
+}
+
+static void test_opaque_encrypted_content_is_preserved(void)
+{
+    struct event_fixture fixture;
+    fixture_init(&fixture);
+    responses_events_feed(&fixture.parser, "{\"type\":\"response.output_item.done\",\"item\":{"
+                                           "\"type\":\"reasoning\",\"summary\":[],"
+                                           "\"encrypted_content\":{\"future\":true}}}");
+    EXPECT(fixture.capture.count == 1);
+    EXPECT(fixture.capture.events[0].kind == EV_REASONING_ITEM);
+    EXPECT(strstr(fixture.capture.events[0].text, "\"encrypted_content\":{\"future\":true}") !=
+           NULL);
+    fixture_free(&fixture);
+}
+
+static void test_non_integer_numbers_are_not_token_counts(void)
+{
+    struct event_fixture fixture;
+    fixture_init(&fixture);
+    responses_events_feed(&fixture.parser, "{\"type\":\"response.completed\",\"response\":{"
+                                           "\"usage\":{\"input_tokens\":1e3,\"output_tokens\":1.0,"
+                                           "\"input_tokens_details\":{\"cached_tokens\":1e3}}}}");
+    EXPECT(fixture.capture.count == 1);
+    EXPECT(fixture.capture.events[0].kind == EV_DONE);
+    EXPECT(fixture.capture.events[0].usage.input_tokens == -1);
+    EXPECT(fixture.capture.events[0].usage.output_tokens == -1);
+    EXPECT(fixture.capture.events[0].usage.cached_tokens == -1);
+    fixture_free(&fixture);
+}
+
+static void test_nullable_reasoning_members_keep_wire_presence(void)
+{
+    struct event_fixture fixture;
+    fixture_init(&fixture);
+    responses_events_feed(&fixture.parser, "{\"type\":\"response.reasoning_summary_text.delta\","
+                                           "\"item_id\":\"rs_1\",\"summary_index\":null,"
+                                           "\"content_index\":0,\"delta\":\"one\"}");
+    EXPECT(fixture.capture.count == 1);
+    EXPECT_STR_EQ(fixture.capture.events[0].text, "one");
+
+    responses_events_feed(&fixture.parser, "{\"type\":\"response.output_item.done\",\"item\":{"
+                                           "\"type\":\"reasoning\",\"summary\":null,"
+                                           "\"encrypted_content\":\"abc==\"}}");
+    EXPECT(fixture.capture.count == 2);
+    EXPECT(fixture.capture.events[1].kind == EV_REASONING_ITEM);
+    EXPECT(strstr(fixture.capture.events[1].text, "\"summary\":null") != NULL);
+    fixture_free(&fixture);
+}
+
+static void test_non_integer_numbers_are_not_reasoning_indices(void)
+{
+    struct event_fixture fixture;
+    fixture_init(&fixture);
+    responses_events_feed(&fixture.parser,
+                          "{\"type\":\"response.reasoning_summary_text.delta\","
+                          "\"item_id\":\"rs_1\",\"summary_index\":0,\"delta\":\"one\"}");
+    responses_events_feed(&fixture.parser,
+                          "{\"type\":\"response.reasoning_summary_text.delta\","
+                          "\"item_id\":\"rs_1\",\"summary_index\":1e3,\"delta\":\"two\"}");
+    EXPECT(fixture.capture.count == 2);
+    EXPECT_STR_EQ(fixture.capture.events[0].text, "one");
+    EXPECT_STR_EQ(fixture.capture.events[1].text, "two");
     fixture_free(&fixture);
 }
 
@@ -794,6 +885,11 @@ int main(void)
     test_incomplete_tool_call_ignored();
     test_reasoning_item_emitted();
     test_reasoning_item_strips_unknown_fields();
+    test_unknown_keys_and_malformed_optional_members_are_ignored();
+    test_opaque_encrypted_content_is_preserved();
+    test_non_integer_numbers_are_not_token_counts();
+    test_non_integer_numbers_are_not_reasoning_indices();
+    test_nullable_reasoning_members_keep_wire_presence();
     test_reasoning_without_encrypted_content_ignored();
     test_reasoning_with_null_encrypted_content_ignored();
     test_reasoning_summary_delta();

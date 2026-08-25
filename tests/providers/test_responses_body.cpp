@@ -85,8 +85,8 @@ static void test_reasoning_provenance(void)
 {
     struct item items[] = {
         {.kind = ITEM_REASONING,
-         .reasoning_json =
-             "{\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"abc==\"}",
+         .reasoning_json = "{\"type\":\"reasoning\",\"summary\":[{\"future\":{\"keep\":true}}],"
+                           "\"encrypted_content\":\"abc==\"}",
          .provider = "codex",
          .model = "o3"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "done"},
@@ -95,6 +95,8 @@ static void test_reasoning_provenance(void)
     json_t *input = responses_build_input_items(items, 2, "codex", "o3", -1);
     EXPECT(json_array_size(input) == 2);
     EXPECT_STR_EQ(item_type(json_array_get(input, 0)), "reasoning");
+    json_t *summary = json_array_get(json_object_get(json_array_get(input, 0), "summary"), 0);
+    EXPECT(json_is_object(json_object_get(summary, "future")));
     json_decref(input);
 
     input = responses_build_input_items(items, 2, "codex", "o4", -1);
@@ -107,6 +109,22 @@ static void test_reasoning_provenance(void)
     EXPECT(json_array_size(input) == 1);
     EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(input, 0), "role")),
                   "assistant");
+    json_decref(input);
+
+    struct item scalar_reasoning = {
+        .kind = ITEM_REASONING,
+        .reasoning_json = "null",
+        .provider = "codex",
+        .model = "o3",
+    };
+    input = responses_build_input_items(&scalar_reasoning, 1, "codex", "o3", -1);
+    EXPECT(json_array_size(input) == 0);
+    json_decref(input);
+
+    scalar_reasoning.reasoning_json = "[]";
+    input = responses_build_input_items(&scalar_reasoning, 1, "codex", "o3", -1);
+    EXPECT(json_array_size(input) == 1);
+    EXPECT(json_is_array(json_array_get(input, 0)));
     json_decref(input);
 }
 
@@ -177,6 +195,23 @@ static void test_body_reasoning_variants(void)
     json_decref(body);
 }
 
+static void test_control_characters_remain_json_safe(void)
+{
+    char text[] = {'a', '\x01', 'b', '\0'};
+    struct item items[] = {{.kind = ITEM_USER_MESSAGE, .text = text}};
+    json_t *input = responses_build_input_items(items, 1, "openai", "gpt-5", -1);
+
+    EXPECT(json_array_size(input) == 1);
+    /* Responses content is always a typed array, so inspect its first text part. */
+    const char *decoded = json_string_value(json_object_get(
+        json_array_get(json_object_get(json_array_get(input, 0), "content"), 0), "text"));
+    EXPECT(decoded != NULL);
+    if (decoded)
+        EXPECT(decoded[0] == 'a' && decoded[1] == '\x01' && decoded[2] == 'b' &&
+               decoded[3] == '\0');
+    json_decref(input);
+}
+
 static void test_body_session_cache_key(void)
 {
     struct context context = {.system_prompt = "sys", .image_input = -1};
@@ -199,6 +234,7 @@ int main(void)
     test_reasoning_provenance();
     test_body_shape();
     test_body_reasoning_variants();
+    test_control_characters_remain_json_safe();
     test_body_session_cache_key();
     T_REPORT();
 }
