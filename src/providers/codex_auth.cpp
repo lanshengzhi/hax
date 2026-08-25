@@ -4,6 +4,7 @@
 #include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string_view>
 
 #include "cred_store.h"
 #include "util.h"
@@ -12,7 +13,14 @@
 
 #define CODEX_CLI_AUTH_PATH "~/.codex/auth.json"
 
-json_t *codex_jwt_payload(const char *jwt)
+static json_t *load_json(std::string_view input, json_error_t *error)
+{
+    if (input.empty())
+        return NULL;
+    return json_loadb(input.data(), input.size(), 0, error);
+}
+
+static json_t *codex_jwt_payload(const char *jwt)
 {
     if (!jwt || !*jwt)
         return NULL;
@@ -78,7 +86,7 @@ char *codex_jwt_account_id(const char *jwt)
     return result;
 }
 
-enum codex_auth_status codex_auth_from_json(const json_t *root, struct codex_auth *auth)
+static enum codex_auth_status auth_from_cli_root(const json_t *root, struct codex_auth *auth)
 {
     memset(auth, 0, sizeof(*auth));
 
@@ -95,7 +103,7 @@ enum codex_auth_status codex_auth_from_json(const json_t *root, struct codex_aut
     return CODEX_AUTH_OK;
 }
 
-enum codex_auth_status codex_auth_from_store_entry(const json_t *entry, struct codex_auth *auth)
+static enum codex_auth_status auth_from_store_root(const json_t *entry, struct codex_auth *auth)
 {
     memset(auth, 0, sizeof(*auth));
 
@@ -112,6 +120,31 @@ enum codex_auth_status codex_auth_from_store_entry(const json_t *entry, struct c
     auth->email = codex_jwt_email(json_string_value(json_object_get(entry, "id_token")));
     auth->source = CODEX_AUTH_SOURCE_HAX;
     return CODEX_AUTH_OK;
+}
+
+enum codex_auth_status codex_auth_from_json(std::string_view root_json, struct codex_auth *auth)
+{
+    memset(auth, 0, sizeof(*auth));
+    json_t *root = load_json(root_json, NULL);
+    if (!root)
+        return CODEX_AUTH_NO_TOKENS;
+
+    enum codex_auth_status status = auth_from_cli_root(root, auth);
+    json_decref(root);
+    return status;
+}
+
+enum codex_auth_status codex_auth_from_store_entry(std::string_view entry_json,
+                                                   struct codex_auth *auth)
+{
+    memset(auth, 0, sizeof(*auth));
+    json_t *entry = load_json(entry_json, NULL);
+    if (!entry)
+        return CODEX_AUTH_NO_TOKENS;
+
+    enum codex_auth_status status = auth_from_store_root(entry, auth);
+    json_decref(entry);
+    return status;
 }
 
 static enum codex_auth_status load_codex_cli(struct codex_auth *auth, char **detail)
@@ -136,7 +169,7 @@ static enum codex_auth_status load_codex_cli(struct codex_auth *auth, char **det
         return CODEX_AUTH_BAD_JSON;
     }
 
-    enum codex_auth_status status = codex_auth_from_json(root, auth);
+    enum codex_auth_status status = auth_from_cli_root(root, auth);
     json_decref(root);
     return status;
 }
@@ -147,10 +180,9 @@ enum codex_auth_status codex_auth_load(struct codex_auth *auth, char **detail)
     if (detail)
         *detail = NULL;
 
-    json_t *entry = cred_store_get("codex");
-    if (entry) {
-        enum codex_auth_status status = codex_auth_from_store_entry(entry, auth);
-        json_decref(entry);
+    struct cred_store_read stored = cred_store_get("codex");
+    if (stored.status == CRED_STORE_ENTRY_PRESENT) {
+        enum codex_auth_status status = codex_auth_from_store_entry(stored.json, auth);
         /* A partial entry falls through to the CLI rather than blocking it. */
         if (status == CODEX_AUTH_OK)
             return status;

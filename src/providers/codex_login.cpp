@@ -164,58 +164,104 @@ char *codex_login_build_exchange_body(const char *authorization_code, const char
     return buf_steal(&form);
 }
 
-json_t *codex_login_entry_from_exchange(const char *body)
+static json_t *load_json(std::string_view input)
 {
-    json_t *root = body ? json_loads(body, 0, NULL) : NULL;
-    if (!root)
-        return NULL;
+    return input.empty() ? NULL : json_loadb(input.data(), input.size(), 0, NULL);
+}
 
-    const char *id_token = json_string_value(json_object_get(root, "id_token"));
-    const char *access_token = json_string_value(json_object_get(root, "access_token"));
-    const char *refresh_token = json_string_value(json_object_get(root, "refresh_token"));
+static std::optional<std::string> dump_json(json_t *root)
+{
+    if (!root)
+        return std::nullopt;
+    char *encoded = json_dumps(root, JSON_COMPACT);
+    json_decref(root);
+    if (!encoded)
+        return std::nullopt;
+    std::string result(encoded);
+    free(encoded);
+    return result;
+}
+
+static std::optional<std::string> entry_field(std::string_view entry, const char *field)
+{
+    json_t *root = load_json(entry);
+    if (!root)
+        return std::nullopt;
+    const char *value = json_string_value(json_object_get(root, field));
+    std::optional<std::string> result = value ? std::optional<std::string>(value) : std::nullopt;
+    json_decref(root);
+    return result;
+}
+
+std::optional<std::string> codex_login_entry_from_exchange(const char *body)
+{
+    json_t *root = NULL;
+    json_t *entry = NULL;
+    char *account_id = NULL;
+    const char *id_token = NULL;
+    const char *access_token = NULL;
+    const char *refresh_token = NULL;
+    std::optional<std::string> result;
+
+    root = body ? json_loads(body, 0, NULL) : NULL;
+    if (!root)
+        goto out;
+
+    id_token = json_string_value(json_object_get(root, "id_token"));
+    access_token = json_string_value(json_object_get(root, "access_token"));
+    refresh_token = json_string_value(json_object_get(root, "refresh_token"));
     if (!id_token || !*id_token || !access_token || !*access_token || !refresh_token ||
-        !*refresh_token) {
-        json_decref(root);
-        return NULL;
-    }
+        !*refresh_token)
+        goto out;
 
     /* The account id is fixed at login: refresh responses may omit the id_token, so it cannot be
      * re-derived later. */
-    char *account_id = codex_jwt_account_id(id_token);
+    account_id = codex_jwt_account_id(id_token);
     if (!account_id)
         account_id = codex_jwt_account_id(access_token);
-    if (!account_id) {
-        json_decref(root);
-        return NULL;
-    }
+    if (!account_id)
+        goto out;
 
-    json_t *entry = json_pack("{s:s, s:s, s:s, s:s}", "access_token", access_token, "refresh_token",
-                              refresh_token, "id_token", id_token, "account_id", account_id);
+    entry = json_pack("{s:s, s:s, s:s, s:s}", "access_token", access_token, "refresh_token",
+                      refresh_token, "id_token", id_token, "account_id", account_id);
+    if (!entry)
+        goto out;
+    result = dump_json(entry);
+    entry = NULL; /* dump_json releases it. */
+
+out:
+    json_decref(entry);
     free(account_id);
     json_decref(root);
-    return entry;
+    return result;
 }
 
-int codex_login_apply_refresh(json_t *entry, const char *body)
+std::optional<std::string> codex_login_apply_refresh(std::string_view entry, const char *body)
 {
+    json_t *entry_root = load_json(entry);
     json_t *root = body ? json_loads(body, 0, NULL) : NULL;
-    if (!root)
-        return -1;
+    const char *access_token = NULL;
+    std::optional<std::string> result;
+    if (!entry_root || !root || !json_is_object(entry_root))
+        goto out;
 
-    const char *access_token = json_string_value(json_object_get(root, "access_token"));
-    if (!access_token || !*access_token) {
-        json_decref(root);
-        return -1;
-    }
+    access_token = json_string_value(json_object_get(root, "access_token"));
+    if (!access_token || !*access_token)
+        goto out;
 
     static const char *const FIELDS[] = {"access_token", "refresh_token", "id_token"};
     for (size_t i = 0; i < sizeof(FIELDS) / sizeof(FIELDS[0]); i++) {
         const char *value = json_string_value(json_object_get(root, FIELDS[i]));
         if (value && *value)
-            json_object_set_new(entry, FIELDS[i], json_string(value));
+            json_object_set_new(entry_root, FIELDS[i], json_string(value));
     }
+    result = dump_json(entry_root);
+    entry_root = NULL; /* dump_json releases it. */
+
+out:
     json_decref(root);
-    return 0;
+    json_decref(entry_root);
+    return result;
 }
 
 /* ---------- refresh lifecycle ---------- */
@@ -253,10 +299,10 @@ struct refresh_tx {
     int force;
     http_tick_cb tick;
     void *tick_user;
-    json_t *adopted; /* out: owned entry the caller should adopt */
-    int refreshed;   /* out: a token POST was attempted */
-    int ran;         /* out: the transaction reached its decision (the lock was acquired) */
-    int transient;   /* out: the failure was retryable rather than a rejected login */
+    std::optional<std::string> adopted; /* out: owned entry the caller should adopt */
+    int refreshed;                      /* out: a token POST was attempted */
+    int ran; /* out: the update callback reached its decision; false when it was not invoked */
+    int transient; /* out: the failure was retryable rather than a rejected login */
 };
 
 int codex_login_refresh_rejected(long http_status, const char *body)
@@ -299,7 +345,8 @@ static int rotation_tick(void *user)
  * /logout and must not be resurrected. An entry *behind* the caller's credential is the residue
  * of an earlier failed persist (only refresh leaves memory ahead of disk), so the refresh
  * proceeds from the freshest refresh token of the lineage and overwrites forward. */
-static enum cred_store_verdict refresh_transaction(json_t *entry, json_t **replacement, void *user)
+static enum cred_store_verdict refresh_transaction(std::optional<std::string_view> entry,
+                                                   std::string *replacement, void *user)
 {
     struct refresh_tx *tx = (struct refresh_tx *)user;
     tx->ran = 1;
@@ -308,31 +355,33 @@ static enum cred_store_verdict refresh_transaction(json_t *entry, json_t **repla
 
     /* Never adopt or refresh across an account boundary: a /login into a different account must
      * not silently take over this session, nor have this lineage's tokens merged into its entry. */
-    const char *entry_account = json_string_value(json_object_get(entry, "account_id"));
-    if (!entry_account || strcmp(entry_account, tx->current_account_id) != 0)
+    std::optional<std::string> entry_account = entry_field(*entry, "account_id");
+    if (!entry_account || *entry_account != tx->current_account_id)
         return CRED_STORE_KEEP;
 
-    const char *entry_access = json_string_value(json_object_get(entry, "access_token"));
-    const char *entry_refresh = json_string_value(json_object_get(entry, "refresh_token"));
-    if (!entry_access || !*entry_access || !entry_refresh || !*entry_refresh)
+    std::optional<std::string> entry_access = entry_field(*entry, "access_token");
+    std::optional<std::string> entry_refresh = entry_field(*entry, "refresh_token");
+    if (!entry_access || entry_access->empty() || !entry_refresh || entry_refresh->empty())
         return CRED_STORE_KEEP;
 
-    int entry_differs = strcmp(entry_access, tx->current_access_token) != 0 ||
-                        strcmp(entry_refresh, tx->current_refresh_token) != 0;
-    int entry_as_fresh = codex_login_token_as_fresh(entry_access, tx->current_access_token);
+    int entry_differs =
+        *entry_access != tx->current_access_token || *entry_refresh != tx->current_refresh_token;
+    int entry_as_fresh =
+        codex_login_token_as_fresh(entry_access->c_str(), tx->current_access_token);
     if (entry_differs && entry_as_fresh &&
-        (tx->force || !codex_login_token_expiring(entry_access, CODEX_TOKEN_REFRESH_MARGIN_S))) {
+        (tx->force ||
+         !codex_login_token_expiring(entry_access->c_str(), CODEX_TOKEN_REFRESH_MARGIN_S))) {
         /* Another process already rotated; adopt its credential without a POST. */
-        tx->adopted = json_incref(entry);
+        tx->adopted = std::string(*entry);
         return CRED_STORE_KEEP;
     }
 
-    const char *refresh_token =
-        entry_differs && !entry_as_fresh ? tx->current_refresh_token : entry_refresh;
-    trace_register_secret(refresh_token);
+    std::string refresh_token =
+        entry_differs && !entry_as_fresh ? tx->current_refresh_token : *entry_refresh;
+    trace_register_secret(refresh_token.c_str());
     char *request_body =
         dump_compact(json_pack("{s:s, s:s, s:s}", "client_id", CODEX_OAUTH_CLIENT_ID, "grant_type",
-                               "refresh_token", "refresh_token", refresh_token));
+                               "refresh_token", "refresh_token", refresh_token.c_str()));
     char *response = NULL;
     long status = 0;
     struct rotation_tick_guard tick_guard = {.tick = tx->tick, .tick_user = tx->tick_user};
@@ -348,23 +397,21 @@ static enum cred_store_verdict refresh_transaction(json_t *entry, json_t **repla
         /* A definitively rejected entry is removed so later loads reach valid fallback
          * credentials (the codex CLI's) instead of resending a dead token — but only when the
          * rejected token is still the entry's own. */
-        if (rejected && strcmp(refresh_token, entry_refresh) == 0)
+        if (rejected && refresh_token == *entry_refresh)
             return CRED_STORE_REMOVE;
         return CRED_STORE_KEEP;
     }
 
-    json_incref(entry);
-    if (codex_login_apply_refresh(entry, response) != 0) {
+    std::optional<std::string> refreshed = codex_login_apply_refresh(*entry, response);
+    free(response);
+    if (!refreshed) {
         /* A 2xx that does not parse as a token response is gateway interference, not a verdict
          * on the grant. */
         tx->transient = 1;
-        json_decref(entry);
-        free(response);
         return CRED_STORE_KEEP;
     }
-    free(response);
-    tx->adopted = json_incref(entry);
-    *replacement = entry;
+    tx->adopted = std::move(*refreshed);
+    *replacement = *tx->adopted;
     return CRED_STORE_WRITE;
 }
 
@@ -384,24 +431,28 @@ enum codex_refresh_result codex_login_ensure_fresh(struct codex_auth *auth, int 
         .force = force,
         .tick = tick,
         .tick_user = tick_user,
+        .adopted = std::nullopt,
+        .refreshed = 0,
+        .ran = 0,
+        .transient = 0,
     };
-    int stored = cred_store_update("codex", refresh_transaction, &tx);
+    enum cred_store_result stored = cred_store_update("codex", refresh_transaction, &tx);
     if (!tx.adopted) {
-        /* An unacquired lock is an environment hiccup, not a verdict on the login. */
+        /* A lock/read failure or malformed store is an environment hiccup, not a verdict on the
+         * login; an invoked callback that declines is a definitive dead/missing credential. */
         return tx.transient || !tx.ran ? CODEX_REFRESH_TRANSIENT : CODEX_REFRESH_DEAD;
     }
 
     /* Losing this write leaves the store a rotation behind; the in-memory adoption below carries
      * this session, and the next rotation's stale-behind overwrite retries the persist. */
-    if (tx.refreshed && stored != 1) {
+    if (tx.refreshed && stored != CRED_STORE_RESULT_CHANGED) {
         char *path = cred_store_file_path();
         hax_warn("cannot persist refreshed codex login to %s", path ? path : "the state directory");
         free(path);
     }
 
     struct codex_auth refreshed;
-    enum codex_auth_status adopted_status = codex_auth_from_store_entry(tx.adopted, &refreshed);
-    json_decref(tx.adopted);
+    enum codex_auth_status adopted_status = codex_auth_from_store_entry(*tx.adopted, &refreshed);
     if (adopted_status != CODEX_AUTH_OK)
         return CODEX_REFRESH_DEAD;
     trace_register_secret(refreshed.refresh_token);
@@ -433,13 +484,12 @@ char *codex_login_status(void)
 
 int codex_login_present(void)
 {
-    json_t *entry = cred_store_get("codex");
-    if (!entry)
+    struct cred_store_read stored = cred_store_get("codex");
+    if (stored.status != CRED_STORE_ENTRY_PRESENT)
         return 0;
 
     struct codex_auth auth;
-    int present = codex_auth_from_store_entry(entry, &auth) == CODEX_AUTH_OK;
-    json_decref(entry);
+    int present = codex_auth_from_store_entry(stored.json, &auth) == CODEX_AUTH_OK;
     if (present)
         codex_auth_release(&auth);
     return present;
@@ -563,8 +613,9 @@ static void register_form_secret(const char *value)
     free(encoded_value);
 }
 
-static json_t *exchange_authorization_code(const char *authorization_code,
-                                           const char *code_verifier, int *cancelled)
+static std::optional<std::string> exchange_authorization_code(const char *authorization_code,
+                                                              const char *code_verifier,
+                                                              int *cancelled)
 {
     register_form_secret(authorization_code);
     register_form_secret(code_verifier);
@@ -587,16 +638,16 @@ static json_t *exchange_authorization_code(const char *authorization_code,
         if (interrupted) {
             *cancelled = 1;
             free(response);
-            return NULL;
+            return std::nullopt;
         }
         char *message = format_api_error(status, response);
         ui_error("token exchange failed: %s", message);
         free(message);
         free(response);
-        return NULL;
+        return std::nullopt;
     }
 
-    json_t *entry = codex_login_entry_from_exchange(response);
+    std::optional<std::string> entry = codex_login_entry_from_exchange(response);
     free(response);
     if (!entry)
         ui_error("token exchange returned an unusable response");
@@ -624,21 +675,23 @@ static int revoke_refresh_token(const char *refresh_token, const char *busy_labe
 }
 
 struct login_install_ctx {
-    json_t *replacement;
-    char *superseded; /* out: owned refresh token the install displaced, or NULL */
+    std::string_view replacement;
+    std::optional<std::string> superseded; /* out: refresh token the install displaced */
 };
 
 /* Capturing the displaced token in the same transaction that installs the replacement keeps the
  * revocation aimed at exactly what was overwritten, even against a concurrent rotation. */
-static enum cred_store_verdict install_login_entry(json_t *entry, json_t **replacement, void *user)
+static enum cred_store_verdict install_login_entry(std::optional<std::string_view> entry,
+                                                   std::string *replacement, void *user)
 {
     struct login_install_ctx *ctx = (struct login_install_ctx *)user;
-    const char *previous =
-        entry ? json_string_value(json_object_get(entry, "refresh_token")) : NULL;
-    const char *incoming = json_string_value(json_object_get(ctx->replacement, "refresh_token"));
-    if (previous && *previous && (!incoming || strcmp(previous, incoming) != 0))
-        ctx->superseded = xstrdup(previous);
-    *replacement = json_incref(ctx->replacement);
+    std::optional<std::string> previous =
+        entry ? entry_field(*entry, "refresh_token") : std::nullopt;
+    std::optional<std::string> incoming = entry_field(ctx->replacement, "refresh_token");
+    if (previous && !previous->empty() &&
+        (!incoming || incoming->empty() || *previous != *incoming))
+        ctx->superseded = std::move(*previous);
+    *replacement = std::string(ctx->replacement);
     return CRED_STORE_WRITE;
 }
 
@@ -671,34 +724,34 @@ int codex_login_run(void)
         return result;
 
     int cancelled = 0;
-    json_t *entry = exchange_authorization_code(authorization_code, code_verifier, &cancelled);
+    std::optional<std::string> entry =
+        exchange_authorization_code(authorization_code, code_verifier, &cancelled);
     free(authorization_code);
     free(code_verifier);
     if (!entry)
         return cancelled ? 1 : -1;
 
-    trace_register_secret(json_string_value(json_object_get(entry, "refresh_token")));
-    struct login_install_ctx install = {.replacement = entry};
-    if (cred_store_update("codex", install_login_entry, &install) != 1) {
+    std::optional<std::string> refresh_token = entry_field(*entry, "refresh_token");
+    if (refresh_token)
+        trace_register_secret(refresh_token->c_str());
+    struct login_install_ctx install = {.replacement = *entry, .superseded = std::nullopt};
+    enum cred_store_result stored = cred_store_update("codex", install_login_entry, &install);
+    if (stored != CRED_STORE_RESULT_CHANGED) {
         char *path = cred_store_file_path();
         ui_error("cannot write %s", path ? path : "the hax state directory");
         free(path);
-        free(install.superseded);
         /* The grant would otherwise stay active with its token stored nowhere. */
-        revoke_refresh_token(json_string_value(json_object_get(entry, "refresh_token")),
-                             "revoking unsaved login...");
-        json_decref(entry);
+        if (refresh_token)
+            revoke_refresh_token(refresh_token->c_str(), "revoking unsaved login...");
         return -1;
     }
-    if (install.superseded) {
-        revoke_refresh_token(install.superseded, "revoking previous login...");
-        free(install.superseded);
-    }
+    if (install.superseded)
+        revoke_refresh_token(install.superseded->c_str(), "revoking previous login...");
 
-    char *email = codex_jwt_email(json_string_value(json_object_get(entry, "id_token")));
+    std::optional<std::string> id_token = entry_field(*entry, "id_token");
+    char *email = codex_jwt_email(id_token ? id_token->c_str() : NULL);
     ui_note("logged in%s%s — hax now manages this token", email ? " as " : "", email ? email : "");
     free(email);
-    json_decref(entry);
     return 0;
 }
 
@@ -706,23 +759,22 @@ int codex_logout_run(void)
 {
     /* Fetch-and-delete is one transaction so the revocation targets exactly the removed token; a
      * separate read could revoke a token that a concurrent refresh had already rotated away. */
-    json_t *entry = NULL;
-    int taken = cred_store_take("codex", &entry);
-    if (taken < 0) {
+    struct cred_store_read taken = cred_store_take("codex");
+    if (taken.status == CRED_STORE_ENTRY_ERROR || taken.status == CRED_STORE_ENTRY_MALFORMED ||
+        taken.status == CRED_STORE_ENTRY_INVALID_ARGUMENT) {
         char *path = cred_store_file_path();
         ui_error("cannot update %s", path ? path : "the hax state directory");
         free(path);
         return -1;
     }
-    if (taken == 0)
+    if (taken.status == CRED_STORE_ENTRY_MISSING)
         return 0;
 
     /* Local removal always succeeds — logging out must work offline — so a failed revocation is
      * reported rather than blocking it. */
-    const char *refresh_token = json_string_value(json_object_get(entry, "refresh_token"));
-    if (refresh_token && *refresh_token &&
-        revoke_refresh_token(refresh_token, "revoking token...") != 0)
+    std::optional<std::string> refresh_token = entry_field(taken.json, "refresh_token");
+    if (refresh_token && !refresh_token->empty() &&
+        revoke_refresh_token(refresh_token->c_str(), "revoking token...") != 0)
         ui_note("could not revoke the token server-side — it expires on its own");
-    json_decref(entry);
     return 1;
 }

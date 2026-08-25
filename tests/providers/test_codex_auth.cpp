@@ -1,5 +1,4 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -95,11 +94,7 @@ static void test_payload_not_json(void)
 
 static enum codex_auth_status status_of(const char *json, struct codex_auth *auth)
 {
-    json_t *root = json_loads(json, 0, NULL);
-    EXPECT(root != NULL);
-    enum codex_auth_status status = codex_auth_from_json(root, auth);
-    json_decref(root);
-    return status;
+    return codex_auth_from_json(json, auth);
 }
 
 static void test_tokens_read(void)
@@ -328,8 +323,7 @@ static void test_jwt_account_id(void)
 
 static void test_store_entry_read(void)
 {
-    json_t *entry = json_pack("{s:s, s:s, s:s}", "access_token", "at", "refresh_token", "rt",
-                              "account_id", "acc");
+    const char *entry = "{\"access_token\":\"at\",\"refresh_token\":\"rt\",\"account_id\":\"acc\"}";
     struct codex_auth auth;
     EXPECT(codex_auth_from_store_entry(entry, &auth) == CODEX_AUTH_OK);
     EXPECT_STR_EQ(auth.access_token, "at");
@@ -339,10 +333,9 @@ static void test_store_entry_read(void)
     codex_auth_release(&auth);
 
     /* Without a refresh token the entry cannot sustain hax-managed rotation. */
-    json_object_del(entry, "refresh_token");
-    EXPECT(codex_auth_from_store_entry(entry, &auth) == CODEX_AUTH_NO_TOKENS);
+    EXPECT(codex_auth_from_store_entry("{\"access_token\":\"at\",\"account_id\":\"acc\"}", &auth) ==
+           CODEX_AUTH_NO_TOKENS);
     EXPECT(auth.access_token == NULL);
-    json_decref(entry);
 }
 
 /* A hax-owned login outranks borrowed codex CLI credentials, and removing it falls back. */
@@ -351,10 +344,8 @@ static void test_load_prefers_hax_store(void)
     char *home = auth_home();
     write_auth(home, "{\"tokens\":{\"access_token\":\"cli-at\",\"account_id\":\"cli-acc\"}}");
 
-    json_t *entry = json_pack("{s:s, s:s, s:s}", "access_token", "hax-at", "refresh_token",
-                              "hax-rt", "account_id", "hax-acc");
-    EXPECT(cred_store_set("codex", entry) == 0);
-    json_decref(entry);
+    EXPECT(cred_store_set("codex", "{\"access_token\":\"hax-at\",\"refresh_token\":\"hax-rt\","
+                                   "\"account_id\":\"hax-acc\"}") == CRED_STORE_RESULT_CHANGED);
 
     struct codex_auth auth;
     EXPECT(codex_auth_load(&auth, NULL) == CODEX_AUTH_OK);
@@ -363,7 +354,7 @@ static void test_load_prefers_hax_store(void)
     EXPECT_STR_EQ(auth.refresh_token, "hax-rt");
     codex_auth_release(&auth);
 
-    EXPECT(cred_store_delete("codex") == 1);
+    EXPECT(cred_store_delete("codex") == CRED_STORE_RESULT_CHANGED);
     EXPECT(codex_auth_load(&auth, NULL) == CODEX_AUTH_OK);
     EXPECT(auth.source == CODEX_AUTH_SOURCE_CODEX_CLI);
     EXPECT_STR_EQ(auth.access_token, "cli-at");

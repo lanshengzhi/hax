@@ -2,7 +2,9 @@
 #ifndef HAX_PROVIDERS_CODEX_LOGIN_H
 #define HAX_PROVIDERS_CODEX_LOGIN_H
 
-#include <jansson.h>
+#include <optional>
+#include <string>
+#include <string_view>
 
 #include "providers/codex_auth.h"
 #include "transport/http.h"
@@ -68,15 +70,15 @@ enum codex_poll_result codex_login_classify_poll(long http_status, const char *b
 /* Build the form-urlencoded authorization-code exchange body; all values percent-encoded. */
 char *codex_login_build_exchange_body(const char *authorization_code, const char *code_verifier);
 
-/* Build a credential-store entry from an exchange response, which must carry id_token,
- * access_token, and refresh_token; the account id is decoded from the token claims. Returns the
- * owned entry or NULL. */
-json_t *codex_login_entry_from_exchange(const char *body);
+/* Build an opaque credential-store JSON value from an exchange response, which must carry id_token,
+ * access_token, and refresh_token; the account id is decoded from the token claims. Returns an
+ * owned JSON string or nullopt. */
+std::optional<std::string> codex_login_entry_from_exchange(const char *body);
 
-/* Merge a refresh response into a store entry. Refresh responses may omit trailing fields;
- * present fields replace stored ones and account_id is preserved. Returns 0 when a new access
- * token was merged, -1 otherwise with the entry unchanged. */
-int codex_login_apply_refresh(json_t *entry, const char *body);
+/* Merge a refresh response into an opaque credential-store JSON value. Refresh responses may omit
+ * trailing fields; present fields replace stored ones and account_id is preserved. Returns an owned
+ * replacement string when a new access token was merged, or nullopt with the input unchanged. */
+std::optional<std::string> codex_login_apply_refresh(std::string_view entry, const char *body);
 
 /* Whether `candidate` is at least as fresh as `current`, ordered by JWT `exp`; an unreadable
  * expiry on either side counts as fresh, so opaque tokens stay adoptable. */
@@ -87,9 +89,9 @@ int codex_login_token_as_fresh(const char *candidate, const char *current);
  * token check. */
 int codex_login_token_expiring(const char *access_token, long margin_s);
 
-/* Whether a refresh response is an explicit terminal OAuth rejection of the grant. Only such
- * proof justifies treating a login as dead and removing it: proxies and gateways fabricate 4xx
- * statuses that say nothing about the token itself. */
+/* Whether a refresh response is an explicit terminal OAuth rejection of the grant. Only such proof
+ * justifies treating a login as dead and removing it: proxies and gateways fabricate 4xx statuses
+ * that say nothing about the token itself. */
 int codex_login_refresh_rejected(long http_status, const char *body);
 
 #endif /* HAX_PROVIDERS_CODEX_LOGIN_H */

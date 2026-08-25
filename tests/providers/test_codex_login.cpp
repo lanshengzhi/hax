@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
+#include <optional>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 
 #include "harness.h"
+#include "json.h"
 #include "util.h"
 #include "providers/codex_login.h"
 #include "text/base64.h"
@@ -134,62 +136,77 @@ static char *exchange_response(const char *id_claims, const char *access_claims)
 
 #define ACCOUNT_CLAIM "{\"https://api.openai.com/auth\":{\"chatgpt_account_id\":\"acc-1\"}}"
 
+static void expect_entry_field(const std::string &entry, const char *field, const char *want)
+{
+    auto parsed = hax::json::parse_value(entry, {.source = "test", .max_input_bytes = 0});
+    EXPECT(parsed.has_value());
+    if (!parsed || !parsed->is_object())
+        return;
+    const hax::json::value *value = parsed->find(field);
+    EXPECT(value && value->is_string());
+    if (value && value->is_string()) {
+        auto encoded = hax::json::serialize_value(*value, {.source = "test", .max_input_bytes = 0});
+        auto expected =
+            hax::json::serialize_value(std::string(want), {.source = "test", .max_input_bytes = 0});
+        EXPECT(encoded && expected && *encoded == *expected);
+    }
+}
+
 static void test_entry_from_exchange(void)
 {
     char *body = exchange_response(ACCOUNT_CLAIM, "{}");
-    json_t *entry = codex_login_entry_from_exchange(body);
-    EXPECT(entry != NULL);
+    std::optional<std::string> entry = codex_login_entry_from_exchange(body);
+    EXPECT(entry.has_value());
     if (entry) {
-        EXPECT_STR_EQ(json_string_value(json_object_get(entry, "account_id")), "acc-1");
-        EXPECT_STR_EQ(json_string_value(json_object_get(entry, "refresh_token")), "rt");
-        EXPECT(json_object_get(entry, "access_token") != NULL);
-        EXPECT(json_object_get(entry, "id_token") != NULL);
-        json_decref(entry);
+        expect_entry_field(*entry, "account_id", "acc-1");
+        expect_entry_field(*entry, "refresh_token", "rt");
+        EXPECT(entry->find("\"access_token\"") != std::string::npos);
+        EXPECT(entry->find("\"id_token\"") != std::string::npos);
     }
     free(body);
 
     /* The account id claim may live on the access token instead. */
     body = exchange_response("{}", ACCOUNT_CLAIM);
     entry = codex_login_entry_from_exchange(body);
-    EXPECT(entry != NULL);
-    if (entry) {
-        EXPECT_STR_EQ(json_string_value(json_object_get(entry, "account_id")), "acc-1");
-        json_decref(entry);
-    }
+    EXPECT(entry.has_value());
+    if (entry)
+        expect_entry_field(*entry, "account_id", "acc-1");
     free(body);
 }
 
 static void test_entry_from_exchange_rejects_incomplete(void)
 {
-    EXPECT(codex_login_entry_from_exchange(NULL) == NULL);
-    EXPECT(codex_login_entry_from_exchange("not json") == NULL);
-    EXPECT(codex_login_entry_from_exchange("{\"access_token\":\"at\"}") == NULL);
+    EXPECT(!codex_login_entry_from_exchange(NULL).has_value());
+    EXPECT(!codex_login_entry_from_exchange("not json").has_value());
+    EXPECT(!codex_login_entry_from_exchange("{\"access_token\":\"at\"}").has_value());
 
     /* Without an account id claim the credential cannot authenticate requests. */
     char *body = exchange_response("{}", "{}");
-    EXPECT(codex_login_entry_from_exchange(body) == NULL);
+    EXPECT(!codex_login_entry_from_exchange(body).has_value());
     free(body);
 }
 
 static void test_apply_refresh_merges(void)
 {
-    json_t *entry = json_pack("{s:s, s:s, s:s, s:s}", "access_token", "old-at", "refresh_token",
-                              "old-rt", "id_token", "old-id", "account_id", "acc-1");
+    const std::string entry = "{\"access_token\":\"old-at\",\"refresh_token\":\"old-rt\","
+                              "\"id_token\":\"old-id\",\"account_id\":\"acc-1\"}";
 
-    EXPECT(codex_login_apply_refresh(
-               entry, "{\"access_token\":\"new-at\",\"refresh_token\":\"new-rt\"}") == 0);
-    EXPECT_STR_EQ(json_string_value(json_object_get(entry, "access_token")), "new-at");
-    EXPECT_STR_EQ(json_string_value(json_object_get(entry, "refresh_token")), "new-rt");
-    /* Omitted fields keep their stored values; the account id never changes after login. */
-    EXPECT_STR_EQ(json_string_value(json_object_get(entry, "id_token")), "old-id");
-    EXPECT_STR_EQ(json_string_value(json_object_get(entry, "account_id")), "acc-1");
+    std::optional<std::string> refreshed = codex_login_apply_refresh(
+        entry, "{\"access_token\":\"new-at\",\"refresh_token\":\"new-rt\"}");
+    EXPECT(refreshed.has_value());
+    if (refreshed) {
+        expect_entry_field(*refreshed, "access_token", "new-at");
+        expect_entry_field(*refreshed, "refresh_token", "new-rt");
+        /* Omitted fields keep their stored values; the account id never changes after login. */
+        expect_entry_field(*refreshed, "id_token", "old-id");
+        expect_entry_field(*refreshed, "account_id", "acc-1");
+    }
 
     /* A response without a new access token cannot have refreshed anything, and a failed merge
      * must not damage the stored rotation state. */
-    EXPECT(codex_login_apply_refresh(entry, "{\"refresh_token\":\"other\"}") == -1);
-    EXPECT(codex_login_apply_refresh(entry, "not json") == -1);
-    EXPECT_STR_EQ(json_string_value(json_object_get(entry, "refresh_token")), "new-rt");
-    json_decref(entry);
+    EXPECT(!codex_login_apply_refresh(entry, "{\"refresh_token\":\"other\"}").has_value());
+    EXPECT(!codex_login_apply_refresh(entry, "not json").has_value());
+    expect_entry_field(entry, "refresh_token", "old-rt");
 }
 
 static void test_token_as_fresh(void)
