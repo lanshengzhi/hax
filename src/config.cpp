@@ -350,7 +350,7 @@ static const struct config_setting REGISTRY[] = {
      .description = "Full llama-server base URL; overrides the port setting"},
     {.key = "providers.llamacpp.api_key", .env_var = "HAX_LLAMACPP_API_KEY",
      .description = "Bearer token when llama-server runs with --api-key", .secret = 1},
-    {.key = "providers.llamacpp.port", .env_var = "HAX_LLAMACPP_PORT", .default_value = "8080",
+    {.key = "providers.llamacpp.port", .env_var = "HAX_LLAMACPP_PORT", .default_value = "9931",
      .description = "Port for the local llama-server (when base_url is unset)",
      .kind = CONFIG_KIND_INT, .min = 1, .max = 65535},
     {.key = "providers.openrouter.title", .env_var = "HAX_OPENROUTER_TITLE",

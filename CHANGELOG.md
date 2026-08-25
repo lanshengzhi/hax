@@ -18,6 +18,8 @@ notes (see [docs/releasing.md](docs/releasing.md)).
   format and canonical conversation item model.
 - Route configuration and model-catalog metadata through the project-owned JSON adapter while
   preserving selection, pricing, tier, and fallback behavior.
+- Update the llama.cpp convenience provider's default llama-server port to 9931; the
+  `HAX_LLAMACPP_PORT` and `HAX_LLAMACPP_BASE_URL` overrides remain available.
 
 
 ## [0.4.0] - 2026-08-22

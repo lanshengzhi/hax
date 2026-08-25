@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "config.h"
 #include "harness.h"
 #include "provider.h"
 #include "providers/llamacpp.h"
@@ -232,6 +233,21 @@ static void test_parse_model_single_mode(void)
     json_decref(entry);
 }
 
+static void test_default_availability_url(void)
+{
+    unsetenv("HAX_LLAMACPP_BASE_URL");
+    unsetenv("HAX_LLAMACPP_PORT");
+    config_set_override("providers.llamacpp.port", NULL);
+    EXPECT(config_load(NULL) == 0);
+    EXPECT(config_load_state(NULL) == 0);
+
+    struct provider_availability availability = {0};
+    PROVIDER_LLAMACPP.prepare_availability(PROVIDER_LLAMACPP.id, &availability);
+    EXPECT(!availability.available);
+    EXPECT_STR_EQ(availability.url, "http://127.0.0.1:9931/v1/models");
+    provider_availability_clear(&availability);
+}
+
 static void test_unscoped_props_url(void)
 {
     char *url = llamacpp_props_url("http://127.0.0.1:18080/v1", NULL);
@@ -268,6 +284,7 @@ int main(void)
     test_parse_model_failed();
     test_parse_props_adapter();
     test_parse_model_single_mode();
+    test_default_availability_url();
     test_unscoped_props_url();
     test_model_scoped_props_url();
     T_REPORT();

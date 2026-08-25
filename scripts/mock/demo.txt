@@ -69,6 +69,6 @@ end-turn
 # without leaving an extra status row.
 text Here's a quick comparison of the OpenAI-family presets:
 delay 250
-text \n\n| Preset | Default base URL | Context probe |\n| --- | --- | --- |\n| openai | api.openai.com | none |\n| openai_compat | (your URL) | none |\n| llamacpp | 127.0.0.1:8080 | /props background |\n| openrouter | openrouter.ai/api | /endpoints background |\n
+text \n\n| Preset | Default base URL | Context probe |\n| --- | --- | --- |\n| openai | api.openai.com | none |\n| openai_compat | (your URL) | none |\n| llamacpp | 127.0.0.1:9931 | /props background |\n| openrouter | openrouter.ai/api | /endpoints background |\n
 usage in=1020 out=72
 end-turn

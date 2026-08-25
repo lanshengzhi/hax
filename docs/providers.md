@@ -140,7 +140,7 @@ not expose usage through its API, so check the OpenCode dashboard instead.
 ## llama.cpp
 
 `llama.cpp` selects the convenience provider for a local `llama-server` at
-`http://127.0.0.1:8080/v1`:
+`http://127.0.0.1:9931/v1`:
 
 ```sh
 llama-server -m /path/to/model.gguf -c 32768

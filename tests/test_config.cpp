@@ -90,7 +90,7 @@ static void test_registry_default(void)
     clear_env();
     config_load(NULL);
     /* llamacpp.port has a fixed default in the registry. */
-    EXPECT_STR_EQ(config_str("providers.llamacpp.port"), "8080");
+    EXPECT_STR_EQ(config_str("providers.llamacpp.port"), "9931");
     /* File overrides the default. */
     EXPECT(config_load("{\"providers\": {\"llamacpp\": {\"port\": \"9090\"}}}") == 0);
     EXPECT_STR_EQ(config_str("providers.llamacpp.port"), "9090");
@@ -151,7 +151,7 @@ static void test_default_on_unset_and_invalid(void)
     EXPECT(config_load("{\"context_limit\": \"nope\"}") == 0);
     EXPECT(config_size("context_limit") == 0);
     /* config_default exposes the registry default tier directly. */
-    EXPECT_STR_EQ(config_default("providers.llamacpp.port"), "8080");
+    EXPECT_STR_EQ(config_default("providers.llamacpp.port"), "9931");
     EXPECT(config_default("model") == NULL);
     EXPECT(config_default("no.such.key") == NULL);
 
@@ -205,13 +205,13 @@ static void test_empty_means_unset(void)
     EXPECT(config_bool("show_reasoning") == 1);
     /* With no file value either, the registry default applies. */
     EXPECT(config_load(NULL) == 0);
-    EXPECT_STR_EQ(config_str_nonempty("providers.llamacpp.port"), "8080");
+    EXPECT_STR_EQ(config_str_nonempty("providers.llamacpp.port"), "9931");
     EXPECT(config_duration_ms("bash.timeout") == 120 * 1000);
     EXPECT(config_bool("show_reasoning") == 0);
     /* config_str applies the same policy now: an empty tier is skipped for a
      * setting where "" has no meaning, so the port reads its default rather
      * than a blank string. */
-    EXPECT_STR_EQ(config_str("providers.llamacpp.port"), "8080");
+    EXPECT_STR_EQ(config_str("providers.llamacpp.port"), "9931");
     /* A setting that documents a meaning for empty keeps it verbatim. */
     setenv("HAX_SYSTEM_PROMPT", "", 1);
     const char *sp = config_str("system_prompt");
@@ -440,7 +440,7 @@ static void test_default_sentinel(void)
     setenv("HAX_LLAMACPP_PORT", "9999", 1);
     EXPECT_STR_EQ(config_str("providers.llamacpp.port"), "9999");
     config_set_override("providers.llamacpp.port", CONFIG_VALUE_DEFAULT);
-    EXPECT_STR_EQ(config_str("providers.llamacpp.port"), "8080");
+    EXPECT_STR_EQ(config_str("providers.llamacpp.port"), "9931");
     /* An empty override on this key is "unset" (a port has no meaning for
      * ""), so it falls through to the env value instead of reading blank —
      * distinct from the sentinel above, which lands on the default. */
