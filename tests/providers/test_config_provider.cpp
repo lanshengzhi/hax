@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "config.h"
 #include "harness.h"
+#include "json_helpers.h"
 #include "provider.h"
 #include "util.h"
 #include "providers/config_provider.h"
@@ -62,8 +62,10 @@ static void test_model_page_json_adapter(void)
     EXPECT(page->data_kind == hax::config_provider_json::model_page_data_kind::array);
     EXPECT(page->entries.size() == 3);
     EXPECT(page->entries[0].id.has_value());
-    if (page->entries[0].id)
-        EXPECT_STR_EQ(page->entries[0].id.value_or("").c_str(), "m");
+    if (page->entries[0].id) {
+        const std::string id = page->entries[0].id.value_or("");
+        EXPECT_STR_EQ(id.c_str(), "m");
+    }
     EXPECT(!page->entries[1].id);
     EXPECT(!page->entries[2].id);
     EXPECT(strstr(page->entries[0].json.c_str(), "opaque") != NULL);
@@ -106,52 +108,61 @@ static void test_cache_ttl_resolution(void)
 static void test_extra_body(void)
 {
     unsigned long diagnostics_before = hax_diag_sequence();
-    json_t *extra = provider_extra_body("providers.extras");
+    char *extra_json = provider_extra_body("providers.extras");
+    test_json *extra = test_json_parse(extra_json);
     /* Reserved 'model', 'n', 'system', and 'include' warn and drop. */
     EXPECT(hax_diag_sequence() == diagnostics_before + 4);
     EXPECT(extra != NULL);
-    if (!extra)
+    if (!extra) {
+        free(extra_json);
         return;
+    }
 
-    EXPECT(json_object_get(extra, "model") == NULL);
-    EXPECT(json_object_get(extra, "n") == NULL);
-    EXPECT(json_object_get(extra, "system") == NULL);
-    EXPECT(json_object_get(extra, "include") == NULL);
-    EXPECT(json_is_real(json_object_get(extra, "temperature")));
-    EXPECT(json_real_value(json_object_get(extra, "temperature")) == 0.25);
-    EXPECT(json_is_integer(json_object_get(extra, "top_logprobs")));
-    json_t *embedded = json_object_get(extra, "embedded");
-    EXPECT(embedded && json_string_length(embedded) == 3);
+    EXPECT(test_json_get(extra, "model") == NULL);
+    EXPECT(test_json_get(extra, "n") == NULL);
+    EXPECT(test_json_get(extra, "system") == NULL);
+    EXPECT(test_json_get(extra, "include") == NULL);
+    EXPECT(test_json_is_real(test_json_get(extra, "temperature")));
+    EXPECT(test_json_real(test_json_get(extra, "temperature")) == 0.25);
+    EXPECT(test_json_is_integer(test_json_get(extra, "top_logprobs")));
+    test_json *embedded = test_json_get(extra, "embedded");
+    EXPECT(embedded && test_json_string_size(embedded) == 3);
     if (embedded)
-        EXPECT(json_string_value(embedded)[0] == 'a' && json_string_value(embedded)[1] == '\0' &&
-               json_string_value(embedded)[2] == 'b');
-    /* Jansson cannot represent an embedded-NUL key, but materialization must not truncate it to
-     * the visible prefix. */
-    EXPECT(json_object_get(extra, "a") == NULL);
-    json_t *routing = json_object_get(extra, "provider");
-    EXPECT(json_is_false(json_object_get(routing, "allow_fallbacks")));
-    EXPECT(json_is_array(json_object_get(routing, "order")));
+        EXPECT(test_json_string(embedded)[0] == 'a' && test_json_string(embedded)[1] == '\0' &&
+               test_json_string(embedded)[2] == 'b');
+    /* Materialization must retain an embedded-NUL key instead of truncating it to the visible
+     * prefix. */
+    EXPECT(test_json_get(extra, "a") == NULL);
+    test_json *routing = test_json_get(extra, "provider");
+    EXPECT(test_json_is_false(test_json_get(routing, "allow_fallbacks")));
+    EXPECT(test_json_is_array(test_json_get(routing, "order")));
 
     /* A member overrides the built field; an object member extends a built object; members
      * the extra body never mentions survive. */
-    json_t *body = json_pack("{s:s, s:f, s:{s:s}}", "model", "m", "temperature", 1.0, "provider",
-                             "sort", "price");
-    provider_extra_body_apply(body, extra);
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "model")), "m");
-    EXPECT(json_real_value(json_object_get(body, "temperature")) == 0.25);
-    json_t *merged = json_object_get(body, "provider");
-    EXPECT_STR_EQ(json_string_value(json_object_get(merged, "sort")), "price");
-    EXPECT(json_is_array(json_object_get(merged, "order")));
-    json_decref(body);
-    json_decref(extra);
+    test_json *body = test_json_owned(hax::json::value{hax::json::object{
+        {"model", "m"},
+        {"temperature", 1.0},
+        {"provider", hax::json::object{{"sort", "price"}}},
+    }});
+    provider_extra_body_apply(body, extra_json);
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "model")), "m");
+    EXPECT(test_json_real(test_json_get(body, "temperature")) == 0.25);
+    test_json *merged = test_json_get(body, "provider");
+    EXPECT_STR_EQ(test_json_string(test_json_get(merged, "sort")), "price");
+    EXPECT(test_json_is_array(test_json_get(merged, "order")));
+    test_json_release(body);
+    test_json_release(extra);
+    free(extra_json);
 
     /* The flat-dotted spelling is also read as a structured value. */
-    json_t *flat = provider_extra_body("providers.flatprov");
+    char *flat_json = provider_extra_body("providers.flatprov");
+    test_json *flat = test_json_parse(flat_json);
     EXPECT(flat != NULL);
     if (flat) {
-        EXPECT(json_is_real(json_object_get(flat, "top_p")));
-        json_decref(flat);
+        EXPECT(test_json_is_real(test_json_get(flat, "top_p")));
+        test_json_release(flat);
     }
+    free(flat_json);
 
     /* Structured reads preserve raw types; the same numeric scalar read as a string setting
      * coerces like any other value. */

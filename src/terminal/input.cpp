@@ -1501,6 +1501,6 @@ char *input_readline(struct input *in, const char *prompt)
 
     if (eof && in->len == 0)
         return NULL;
-    /* Jansson rejects malformed UTF-8, so normalize external input before returning it. */
+    /* The JSON adapter rejects malformed UTF-8, so normalize external input before returning it. */
     return utf8_sanitize(in->buf, in->len);
 }

@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "config.h"
 #include "harness.h"
+#include "json_helpers.h"
 #include "provider.h"
 #include "providers/llamacpp.h"
 #include "providers/openai_compat_json.h"
@@ -158,10 +158,9 @@ static void test_reconcile_unusable_response(void)
 
 static void test_parse_model(void)
 {
-    json_t *entry = json_loads("{\"id\": \"running\", \"status\": {\"value\": \"loaded\"}, "
-                               "\"architecture\": {\"input_modalities\": [\"text\", \"image\"]}, "
-                               "\"meta\": {\"n_ctx\": 32768}}",
-                               0, NULL);
+    const char *entry = "{\"id\": \"running\", \"status\": {\"value\": \"loaded\"}, "
+                        "\"architecture\": {\"input_modalities\": [\"text\", \"image\"]}, "
+                        "\"meta\": {\"n_ctx\": 32768}}";
     struct model_info info;
     model_info_init(&info);
     llamacpp_parse_model(entry, &info);
@@ -169,34 +168,29 @@ static void test_parse_model(void)
     EXPECT(info.image_input == PROVIDER_CAP_YES);
     EXPECT_STR_EQ(info.description, "loaded");
     free(info.description);
-    json_decref(entry);
 }
 
 static void test_parse_model_idle_text_only(void)
 {
-    json_t *entry = json_loads("{\"id\": \"idle\", \"status\": {\"value\": \"unloaded\"}, "
-                               "\"architecture\": {\"input_modalities\": [\"text\"]}}",
-                               0, NULL);
+    const char *entry = "{\"id\": \"idle\", \"status\": {\"value\": \"unloaded\"}, "
+                        "\"architecture\": {\"input_modalities\": [\"text\"]}}";
     struct model_info info;
     model_info_init(&info);
     llamacpp_parse_model(entry, &info);
     EXPECT(info.context == 0);
     EXPECT(info.image_input == PROVIDER_CAP_NO);
     EXPECT(info.description == NULL);
-    json_decref(entry);
 }
 
 static void test_parse_model_failed(void)
 {
-    json_t *entry = json_loads("{\"id\": \"broken\", \"status\": {\"value\": \"unloaded\", "
-                               "\"failed\": true, \"exit_code\": 137}}",
-                               0, NULL);
+    const char *entry = "{\"id\": \"broken\", \"status\": {\"value\": \"unloaded\", "
+                        "\"failed\": true, \"exit_code\": 137}}";
     struct model_info info;
     model_info_init(&info);
     llamacpp_parse_model(entry, &info);
     EXPECT_STR_EQ(info.description, "failed (exit 137)");
     free(info.description);
-    json_decref(entry);
 }
 
 static void test_parse_props_adapter(void)
@@ -223,14 +217,13 @@ static void test_parse_props_adapter(void)
 
 static void test_parse_model_single_mode(void)
 {
-    json_t *entry = json_loads("{\"id\": \"model.gguf\", \"meta\": {\"n_ctx\": 4096}}", 0, NULL);
+    const char *entry = "{\"id\": \"model.gguf\", \"meta\": {\"n_ctx\": 4096}}";
     struct model_info info;
     model_info_init(&info);
     llamacpp_parse_model(entry, &info);
     EXPECT(info.context == 4096);
     EXPECT(info.image_input == PROVIDER_CAP_UNKNOWN);
     EXPECT(info.description == NULL);
-    json_decref(entry);
 }
 
 static void test_default_availability_url(void)

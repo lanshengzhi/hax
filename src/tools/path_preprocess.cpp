@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: MIT */
 #include "tools/path_preprocess.h"
 
-#include <jansson.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "json_value.h"
+#include "util.h"
 #include "system/path.h"
 
 char *tool_relativize_path_args(const char *args_json)
@@ -13,30 +14,25 @@ char *tool_relativize_path_args(const char *args_json)
     if (!args_json)
         return NULL;
 
-    json_t *root = json_loads(args_json, 0, NULL);
-    if (!root)
+    auto root =
+        hax::json::parse_value(args_json, {.source = "tool arguments", .max_input_bytes = 0});
+    if (!root || !root->is_object())
         return NULL;
 
-    char *rewritten_args = NULL;
-    char *relative_path = NULL;
-    char *expanded_path = NULL;
-    const char *path = json_string_value(json_object_get(root, "path"));
-    if (!path)
-        goto out;
+    const hax::json::value *path_value = root->find("path");
+    if (!path_value || !path_value->is_string())
+        return NULL;
 
-    expanded_path = path_expand_home(path);
+    char *expanded_path = path_expand_home(path_value->string_value().c_str());
     char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof(cwd)))
-        relative_path = path_relativize(expanded_path, cwd);
+    char *relative_path = getcwd(cwd, sizeof(cwd)) ? path_relativize(expanded_path, cwd) : NULL;
     free(expanded_path);
     if (!relative_path)
-        goto out;
+        return NULL;
 
-    json_object_set_new(root, "path", json_string(relative_path));
+    root->set("path", relative_path);
     free(relative_path);
-    rewritten_args = json_dumps(root, JSON_COMPACT);
-
-out:
-    json_decref(root);
-    return rewritten_args;
+    auto encoded =
+        hax::json::serialize_value(*root, {.source = "tool arguments", .max_input_bytes = 0});
+    return encoded ? xstrdup(encoded->c_str()) : NULL;
 }

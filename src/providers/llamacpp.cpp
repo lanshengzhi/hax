@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/llamacpp.h"
 
-#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -169,13 +168,10 @@ static void parse_props(const char *body, const char *model, struct model_info *
     hax::openai_compat_json::parse_llamacpp_props(body ? body : "", model, model_info);
 }
 
-void llamacpp_parse_model(const json_t *entry, struct model_info *info)
+void llamacpp_parse_model(const char *entry, struct model_info *info)
 {
-    char *encoded = entry ? json_dumps(entry, JSON_COMPACT) : NULL;
-    if (encoded) {
-        hax::openai_compat_json::parse_llamacpp_model(encoded, info);
-        free(encoded);
-    }
+    if (entry)
+        hax::openai_compat_json::parse_llamacpp_model(entry, info);
 }
 
 char *llamacpp_model_label(struct provider *provider, const char *model)

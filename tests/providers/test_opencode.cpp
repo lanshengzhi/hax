@@ -39,8 +39,10 @@ static void test_non_ok_status_becomes_note(void)
     EXPECT(usage.has_value());
     if (usage && usage->windows.size() == 1) {
         EXPECT(usage->windows[0].note.has_value());
-        if (usage->windows[0].note)
-            EXPECT_STR_EQ(usage->windows[0].note.value_or("").c_str(), "limited");
+        if (usage->windows[0].note) {
+            const std::string note = usage->windows[0].note.value_or("");
+            EXPECT_STR_EQ(note.c_str(), "limited");
+        }
     }
 }
 

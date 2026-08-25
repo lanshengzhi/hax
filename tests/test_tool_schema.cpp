@@ -1,19 +1,18 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stddef.h>
 
 #include "harness.h"
+#include "json_helpers.h"
 #include "provider.h"
 #include "tool_schema.h"
 
 static void test_empty_def_yields_object_schema(void)
 {
     struct tool_def def = {.name = "noop"};
-    json_t *schema = tool_schema_build(&def);
-    EXPECT_STR_EQ(json_string_value(json_object_get(schema, "type")), "object");
-    EXPECT(json_object_get(schema, "properties") != NULL);
-    EXPECT(json_object_get(schema, "required") == NULL);
-    json_decref(schema);
+    test_json schema = tool_schema_value(&def);
+    EXPECT_STR_EQ(test_json_string(test_json_get(&schema, "type")), "object");
+    EXPECT(test_json_get(&schema, "properties") != NULL);
+    EXPECT(test_json_get(&schema, "required") == NULL);
 }
 
 static void test_primitive_params(void)
@@ -23,20 +22,19 @@ static void test_primitive_params(void)
         {.name = "timeout_seconds", .type = "integer", .minimum = 1},
     };
     struct tool_def def = {.name = "bash", .params = params, .n_params = 2};
-    json_t *schema = tool_schema_build(&def);
+    test_json schema = tool_schema_value(&def);
 
-    json_t *properties = json_object_get(schema, "properties");
-    json_t *command = json_object_get(properties, "command");
-    EXPECT_STR_EQ(json_string_value(json_object_get(command, "type")), "string");
-    EXPECT_STR_EQ(json_string_value(json_object_get(command, "description")), "Shell command.");
-    json_t *timeout = json_object_get(properties, "timeout_seconds");
-    EXPECT(json_integer_value(json_object_get(timeout, "minimum")) == 1);
-    EXPECT(json_object_get(timeout, "items") == NULL);
+    const test_json *properties = test_json_get(&schema, "properties");
+    const test_json *command = test_json_get(properties, "command");
+    EXPECT_STR_EQ(test_json_string(test_json_get(command, "type")), "string");
+    EXPECT_STR_EQ(test_json_string(test_json_get(command, "description")), "Shell command.");
+    const test_json *timeout = test_json_get(properties, "timeout_seconds");
+    EXPECT(test_json_integer(test_json_get(timeout, "minimum")) == 1);
+    EXPECT(test_json_get(timeout, "items") == NULL);
 
-    json_t *required = json_object_get(schema, "required");
-    EXPECT(json_array_size(required) == 1);
-    EXPECT_STR_EQ(json_string_value(json_array_get(required, 0)), "command");
-    json_decref(schema);
+    const test_json *required = test_json_get(&schema, "required");
+    EXPECT(test_json_size(required) == 1);
+    EXPECT_STR_EQ(test_json_string(test_json_array_get(required, 0)), "command");
 }
 
 static void test_array_param_emits_item_type(void)
@@ -45,14 +43,13 @@ static void test_array_param_emits_item_type(void)
         {.name = "ids", .type = "array", .item_type = "string", .required = 1},
     };
     struct tool_def def = {.name = "batch", .params = params, .n_params = 1};
-    json_t *schema = tool_schema_build(&def);
+    test_json schema = tool_schema_value(&def);
 
-    json_t *ids = json_object_get(json_object_get(schema, "properties"), "ids");
-    EXPECT_STR_EQ(json_string_value(json_object_get(ids, "type")), "array");
-    json_t *items = json_object_get(ids, "items");
-    EXPECT(json_is_object(items));
-    EXPECT_STR_EQ(json_string_value(json_object_get(items, "type")), "string");
-    json_decref(schema);
+    const test_json *ids = test_json_get(test_json_get(&schema, "properties"), "ids");
+    EXPECT_STR_EQ(test_json_string(test_json_get(ids, "type")), "array");
+    const test_json *items = test_json_get(ids, "items");
+    EXPECT(test_json_is_object(items));
+    EXPECT_STR_EQ(test_json_string(test_json_get(items, "type")), "string");
 }
 
 int main(void)

@@ -65,7 +65,7 @@ reject_lint() {
 # such file, and reaching the sourcing below would abort the script outright.
 case "$(uname)" in
 Darwin)
-    brew install jansson meson ninja pkg-config ${extras:+fzf} ${lint:+llvm}
+    brew install meson ninja pkg-config ${extras:+fzf} ${lint:+llvm}
     exit 0
     ;;
 FreeBSD)
@@ -73,7 +73,7 @@ FreeBSD)
     # clang and make come from the base system, and pkgconf provides
     # pkg-config. python3 is explicit because meson depends on a versioned
     # python package that need not provide the unversioned command.
-    as_root pkg install $assume_yes curl jansson meson ninja pkgconf \
+    as_root pkg install $assume_yes curl meson ninja pkgconf \
         python3 ${extras:+fzf}
     exit 0
     ;;
@@ -81,7 +81,7 @@ OpenBSD)
     reject_lint OpenBSD
     # clang, make and pkg-config all come from the base system here, and meson
     # brings a python3 that the e2e tests can use.
-    as_root pkg_add -I curl jansson meson ninja ${extras:+fzf}
+    as_root pkg_add -I curl meson ninja ${extras:+fzf}
     exit 0
     ;;
 esac
@@ -92,12 +92,12 @@ case "$ID ${ID_LIKE:-}" in
 *debian* | *ubuntu*)
     as_root apt-get update
     as_root apt-get install $assume_yes --no-install-recommends \
-        build-essential libcurl4-openssl-dev libjansson-dev \
+        build-essential libcurl4-openssl-dev \
         meson ninja-build pkg-config python3 ${extras:+fzf} \
         ${lint:+clang-format clang-tidy}
     ;;
 *fedora* | *rhel* | *centos*)
-    as_root dnf install $assume_yes gcc make libcurl-devel jansson-devel \
+    as_root dnf install $assume_yes gcc make libcurl-devel \
         meson ninja-build pkgconf-pkg-config python3 ${lint:+clang-tools-extra} || {
         printf '%s\n' 'hint: RHEL-family systems may need the CRB and EPEL repositories enabled' >&2
         exit 1
@@ -110,11 +110,11 @@ case "$ID ${ID_LIKE:-}" in
     fi
     ;;
 *suse*)
-    as_root zypper install $assume_yes gcc make libcurl-devel libjansson-devel \
+    as_root zypper install $assume_yes gcc make libcurl-devel \
         meson ninja pkgconf-pkg-config python3 ${extras:+fzf} ${lint:+clang-tools}
     ;;
 *arch*)
-    arch_pkgs="gcc make curl jansson meson ninja pkgconf python ${extras:+fzf} ${lint:+clang}"
+    arch_pkgs="gcc make curl meson ninja pkgconf python ${extras:+fzf} ${lint:+clang}"
     # Disposable containers need the full sync-and-upgrade (a bare -Sy install risks a
     # partial upgrade), but only on explicit opt-in from the CI workflow: `CI` alone also
     # describes self-hosted runners on real machines. Elsewhere only the listed packages
@@ -133,7 +133,7 @@ case "$ID ${ID_LIKE:-}" in
 *alpine*)
     reject_lint Alpine
     as_root apk add --no-cache \
-        build-base meson samurai curl-dev jansson-dev python3 ${extras:+fzf}
+        build-base meson samurai curl-dev python3 ${extras:+fzf}
     ;;
 *)
     printf "error: unsupported platform '%s'; see README.md for dependencies\n" "$ID" >&2

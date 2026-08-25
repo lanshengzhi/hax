@@ -68,9 +68,9 @@ make install              # optional; may prompt for sudo
 ```
 
 `scripts/install_deps.sh` installs the build dependencies — a C compiler, `libcurl`,
-`jansson`, `meson`, `ninja`, and `pkg-config` — plus `fzf`, which hax uses for `@file`
-completion when available. Meson fetches the header-only Glaze v8.1.0 JSON dependency from a
-pinned source archive, so no separate Glaze checkout or system package is required. Glaze is also
+`meson`, `ninja`, and `pkg-config` — plus `fzf`, which hax uses for `@file` completion when
+available. Meson fetches the header-only Glaze v8.1.0 JSON dependency from a pinned source archive,
+so no separate Glaze checkout or system package is required. Glaze is also
 available as Debian's [`libglaze-dev`](https://packages.debian.org/sid/amd64/libdevel/libglaze-dev)
 package and Homebrew's [`glaze`](https://formulae.brew.sh/formula/glaze) formula; the archive keeps
 this build independent of installed package revisions. Homebrew installs it with

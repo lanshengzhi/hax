@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 #include <errno.h>
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
+#include "json_value.h"
 #include "provider.h"
 #include "tool.h"
 #include "util.h"
@@ -63,10 +63,10 @@ static char *replace_occurrences(const char *content, size_t content_len, const 
 static char *run(const char *args_json, struct tool_run_ctx *ctx)
 {
     (void)ctx;
-    json_error_t json_error;
-    json_t *root = json_loads(args_json ? args_json : "{}", 0, &json_error);
+    auto root = hax::json::parse_value(args_json ? args_json : "{}",
+                                       {.source = "edit arguments", .max_input_bytes = 0});
     if (!root)
-        return xasprintf("invalid arguments: %s", json_error.text);
+        return xasprintf("invalid arguments: %s", hax::json::format_error(root.error()).c_str());
 
     char *result = NULL;
     char *path = NULL;
@@ -85,29 +85,32 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
     size_t match_count = 0;
     size_t updated_len = 0;
 
-    const char *raw_path = json_string_value(json_object_get(root, "path"));
-    json_t *old_string_json = json_object_get(root, "old_string");
-    json_t *new_string_json = json_object_get(root, "new_string");
-    json_t *replace_all_json = json_object_get(root, "replace_all");
+    const hax::json::value *path_value = root->find("path");
+    const hax::json::value *old_string_json = root->find("old_string");
+    const hax::json::value *new_string_json = root->find("new_string");
+    const hax::json::value *replace_all_json = root->find("replace_all");
+    const char *raw_path =
+        path_value && path_value->is_string() ? path_value->string_value().c_str() : NULL;
 
     if (!raw_path || !*raw_path) {
         result = xstrdup("missing 'path' argument");
         goto out;
     }
-    if (!json_is_string(old_string_json)) {
+    if (!old_string_json || !old_string_json->is_string()) {
         result = xstrdup("missing 'old_string' argument");
         goto out;
     }
-    if (!json_is_string(new_string_json)) {
+    if (!new_string_json || !new_string_json->is_string()) {
         result = xstrdup("missing 'new_string' argument");
         goto out;
     }
 
-    old_string = json_string_value(old_string_json);
-    old_string_len = json_string_length(old_string_json);
-    new_string = json_string_value(new_string_json);
-    new_string_len = json_string_length(new_string_json);
-    replace_all = json_is_true(replace_all_json);
+    old_string = old_string_json->string_value().data();
+    old_string_len = old_string_json->string_value().size();
+    new_string = new_string_json->string_value().data();
+    new_string_len = new_string_json->string_value().size();
+    replace_all =
+        replace_all_json && replace_all_json->is_boolean() && replace_all_json->boolean_value();
 
     if (old_string_len == 0) {
         result = xstrdup("'old_string' must be non-empty");
@@ -166,7 +169,6 @@ out:
     free(updated);
     free(original);
     free(path);
-    json_decref(root);
     return result;
 }
 

@@ -549,7 +549,7 @@ static void test_extract_member(void)
         if (decoded && decoded->find("s"))
             EXPECT_STR_EQ(decoded->find("s")->string_value().c_str(), "esc \" } ] {");
     }
-    /* Scalar member values come back too, without a Jansson ownership boundary. */
+    /* Scalar member values come back too, without a third-party ownership boundary. */
     value = catalog_extract_member("{\"n\": 42}", "n");
     EXPECT(value && *value == "42");
     value = catalog_extract_member("{\"n\": 1, \"n\": 2}", "n");

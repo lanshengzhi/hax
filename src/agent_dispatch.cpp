@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 #include "agent_dispatch.h"
 
-#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "agent_core.h"
 #include "agent_tool.h"
+#include "json_value.h"
 #include "provider.h"
 #include "tool.h"
 #include "util.h"
@@ -59,13 +59,12 @@ static char *display_argument(const struct tool *tool, const char *args_json)
     }
     if (!tool->display.arg_name)
         return NULL;
-    json_t *root = json_loads(args_json, 0, NULL);
-    if (!root)
+    auto root =
+        hax::json::parse_value(args_json, {.source = "tool arguments", .max_input_bytes = 0});
+    if (!root || !root->is_object())
         return NULL;
-    const char *value = json_string_value(json_object_get(root, tool->display.arg_name));
-    char *argument = value ? xstrdup(value) : NULL;
-    json_decref(root);
-    return argument;
+    const hax::json::value *value = root->find(tool->display.arg_name);
+    return value && value->is_string() ? xstrdup(value->string_value().c_str()) : NULL;
 }
 
 static char *display_extra(const struct tool *tool, const char *args_json, int terminal_width)

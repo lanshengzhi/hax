@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/codex.h"
 
-#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,7 +80,7 @@ struct codex {
     char *default_effort;
     char *session_id; /* stable prompt-cache and request-routing key */
     char **extra_headers;
-    json_t *extra_body;
+    char *extra_body;
 };
 
 /* Clearing the mark only once a different token is adopted keeps callers that cannot re-mark from
@@ -194,17 +193,17 @@ static void note_unauthorized(struct codex *codex)
 }
 
 static char *build_request_body(const struct context *context, const char *provider,
-                                const char *model, const char *cache_key, const json_t *extra_body)
+                                const char *model, const char *cache_key, const char *extra_body)
 {
-    json_t *body = responses_build_body(context, provider, model, NULL);
-    json_object_set_new(body, "text", json_pack("{s:s}", "verbosity", "low"));
+    hax::json::value body = responses_build_body(context, provider, model, NULL);
+    body.set("text", hax::json::object{{"verbosity", "low"}});
     if (cache_key)
-        json_object_set_new(body, "prompt_cache_key", json_string(cache_key));
-    provider_extra_body_apply(body, extra_body);
+        body.set("prompt_cache_key", cache_key);
+    provider_extra_body_apply(&body, extra_body);
 
-    char *body_json = json_dumps(body, JSON_COMPACT);
-    json_decref(body);
-    return body_json;
+    auto encoded =
+        hax::json::serialize_value(body, {.source = "Codex request", .max_input_bytes = 0});
+    return encoded ? xstrdup(encoded->c_str()) : NULL;
 }
 
 static char **build_stream_headers(const struct codex *codex)
@@ -519,41 +518,21 @@ char *codex_model_catalog_error(long http_status, const char *token_expired)
     return xstrdup("could not reach chatgpt.com to list models — check your network");
 }
 
-static char *dump_catalog_entry(const json_t *entry)
+int codex_model_is_hidden(const char *entry)
 {
-    return entry ? json_dumps(entry, JSON_COMPACT) : NULL;
+    return entry ? hax::codex_json::model_is_hidden(entry) : 0;
 }
 
-int codex_model_is_hidden(const json_t *entry)
+void codex_parse_model(const char *entry, struct model_info *model)
 {
-    char *encoded = dump_catalog_entry(entry);
-    if (!encoded)
-        return 0;
-    const int hidden = hax::codex_json::model_is_hidden(encoded);
-    free(encoded);
-    return hidden;
+    if (entry && model)
+        hax::codex_json::parse_model(entry, model);
 }
 
-void codex_parse_model(const json_t *entry, struct model_info *model)
+void codex_parse_model_efforts(const char *entry, struct effort_set *efforts)
 {
-    if (!model)
-        return;
-    char *encoded = dump_catalog_entry(entry);
-    if (!encoded)
-        return;
-    hax::codex_json::parse_model(encoded, model);
-    free(encoded);
-}
-
-void codex_parse_model_efforts(const json_t *entry, struct effort_set *efforts)
-{
-    if (!efforts)
-        return;
-    char *encoded = dump_catalog_entry(entry);
-    if (!encoded)
-        return;
-    hax::codex_json::parse_model_efforts(encoded, efforts);
-    free(encoded);
+    if (entry && efforts)
+        hax::codex_json::parse_model_efforts(entry, efforts);
 }
 
 static int codex_list_models(struct provider *provider, struct model_info **models_out,
@@ -657,7 +636,7 @@ static void codex_destroy(struct provider *provider)
     free(codex->default_effort);
     free(codex->session_id);
     string_array_free(codex->extra_headers);
-    json_decref(codex->extra_body);
+    free(codex->extra_body);
     free(codex);
 }
 

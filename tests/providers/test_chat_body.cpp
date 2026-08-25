@@ -1,20 +1,20 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <string.h>
 
 #include "catalog.h"
 #include "harness.h"
+#include "json_helpers.h"
 #include "provider.h"
 #include "providers/chat_body.h"
 #include "providers/wire.h"
 
 /* Find the first message with the given role in a built messages array. */
-static json_t *find_role(json_t *msgs, const char *role)
+static test_json *find_role(test_json *msgs, const char *role)
 {
-    size_t i, n = json_array_size(msgs);
+    size_t i, n = test_json_size(msgs);
     for (i = 0; i < n; i++) {
-        json_t *m = json_array_get(msgs, i);
-        const char *r = json_string_value(json_object_get(m, "role"));
+        test_json *m = test_json_array_get(msgs, i);
+        const char *r = test_json_string(test_json_get(m, "role"));
         if (r && strcmp(r, role) == 0)
             return m;
     }
@@ -37,16 +37,17 @@ static void test_reasoning_attached_when_field_set(void)
          .tool_name = "read",
          .tool_arguments_json = "{\"path\":\"x\"}"},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 3, "reasoning_content", "llama.cpp", "m1", -1);
+    test_json *msgs = test_json_owned(
+        chat_build_messages(NULL, items, 3, "reasoning_content", "llama.cpp", "m1", -1));
 
-    EXPECT(json_array_size(msgs) == 1);
-    json_t *a = find_role(msgs, "assistant");
+    EXPECT(test_json_size(msgs) == 1);
+    test_json *a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "reasoning_content")), "let me read it");
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "content")), "Reading the file.");
-    EXPECT(json_array_size(json_object_get(a, "tool_calls")) == 1);
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "reasoning_content")), "let me read it");
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "content")), "Reading the file.");
+    EXPECT(test_json_size(test_json_get(a, "tool_calls")) == 1);
 
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
 /* With a NULL field (round-trip disabled), no reasoning_content is emitted
@@ -60,14 +61,15 @@ static void test_reasoning_omitted_when_field_null(void)
          .model = "m1"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "Hello."},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 2, NULL, "llama.cpp", "m1", -1);
+    test_json *msgs =
+        test_json_owned(chat_build_messages(NULL, items, 2, NULL, "llama.cpp", "m1", -1));
 
-    json_t *a = find_role(msgs, "assistant");
+    test_json *a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT(json_object_get(a, "reasoning_content") == NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "content")), "Hello.");
+    EXPECT(test_json_get(a, "reasoning_content") == NULL);
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "content")), "Hello.");
 
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
 /* A custom field name (e.g. "reasoning") is honored verbatim. */
@@ -77,14 +79,15 @@ static void test_reasoning_custom_field_name(void)
         {.kind = ITEM_REASONING, .reasoning_text = "cot", .provider = "llama.cpp", .model = "m1"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "Hi."},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 2, "reasoning", "llama.cpp", "m1", -1);
+    test_json *msgs =
+        test_json_owned(chat_build_messages(NULL, items, 2, "reasoning", "llama.cpp", "m1", -1));
 
-    json_t *a = find_role(msgs, "assistant");
+    test_json *a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "reasoning")), "cot");
-    EXPECT(json_object_get(a, "reasoning_content") == NULL);
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "reasoning")), "cot");
+    EXPECT(test_json_get(a, "reasoning_content") == NULL);
 
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
 /* Another wire's opaque reasoning encoding (an unstamped Responses item) never reaches a Chat
@@ -95,15 +98,16 @@ static void test_codex_reasoning_json_ignored(void)
         {.kind = ITEM_REASONING, .reasoning_json = "{\"id\":\"r1\"}"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "Done."},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 2, "reasoning_content", "codex", "o3", -1);
+    test_json *msgs = test_json_owned(
+        chat_build_messages(NULL, items, 2, "reasoning_content", "codex", "o3", -1));
 
-    json_t *a = find_role(msgs, "assistant");
+    test_json *a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT(json_object_get(a, "reasoning_content") == NULL);
-    EXPECT(json_object_get(a, "reasoning_details") == NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "content")), "Done.");
+    EXPECT(test_json_get(a, "reasoning_content") == NULL);
+    EXPECT(test_json_get(a, "reasoning_details") == NULL);
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "content")), "Done.");
 
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
 /* Typed reasoning blocks are opaque replay state the backend requires back verbatim, so they
@@ -126,22 +130,43 @@ static void test_reasoning_details_round_trip(void)
          .model = "m1"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "Done."},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 4, NULL, "openrouter", "m1", -1);
+    test_json *msgs =
+        test_json_owned(chat_build_messages(NULL, items, 4, NULL, "openrouter", "m1", -1));
 
-    EXPECT(json_array_size(msgs) == 1);
-    json_t *a = find_role(msgs, "assistant");
+    EXPECT(test_json_size(msgs) == 1);
+    test_json *a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    json_t *details = json_object_get(a, "reasoning_details");
-    EXPECT(json_array_size(details) == 2);
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(details, 0), "data")), "aa");
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(details, 1), "data")), "bb");
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "content")), "Done.");
+    test_json *details = test_json_get(a, "reasoning_details");
+    EXPECT(test_json_size(details) == 2);
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(details, 0), "data")), "aa");
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(details, 1), "data")), "bb");
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "content")), "Done.");
 
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
 /* The typed sequence carries the same reasoning as the plain member, so only one of them is
  * sent; and reasoning from another provider or model is replayed by neither. */
+static void test_reasoning_details_preserve_large_integer(void)
+{
+    struct item items[] = {
+        {.kind = ITEM_REASONING,
+         .reasoning_json = "[{\"type\":\"reasoning.encrypted\","
+                           "\"future\":9223372036854775808}]",
+         .provider = "openrouter",
+         .model = "m1"},
+    };
+    hax::json::value messages =
+        chat_build_messages(NULL, items, 1, "reasoning", "openrouter", "m1", -1);
+    auto encoded = hax::json::serialize_value(messages);
+    EXPECT(encoded.has_value());
+    if (encoded) {
+        EXPECT(strstr(encoded->c_str(), "9223372036854775808") != NULL);
+        EXPECT(strstr(encoded->c_str(), "\"reasoning_details\"") != NULL);
+        EXPECT(strstr(encoded->c_str(), "\"reasoning_content\"") == NULL);
+    }
+}
+
 static void test_reasoning_details_supersede_text(void)
 {
     struct item items[] = {
@@ -152,19 +177,21 @@ static void test_reasoning_details_supersede_text(void)
          .model = "m1"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "Done."},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 2, "reasoning", "openrouter", "m1", -1);
-    json_t *a = find_role(msgs, "assistant");
+    test_json *msgs =
+        test_json_owned(chat_build_messages(NULL, items, 2, "reasoning", "openrouter", "m1", -1));
+    test_json *a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT(json_array_size(json_object_get(a, "reasoning_details")) == 1);
-    EXPECT(json_object_get(a, "reasoning") == NULL);
-    json_decref(msgs);
+    EXPECT(test_json_size(test_json_get(a, "reasoning_details")) == 1);
+    EXPECT(test_json_get(a, "reasoning") == NULL);
+    test_json_release(msgs);
 
-    msgs = chat_build_messages(NULL, items, 2, "reasoning", "openrouter", "m2", -1);
+    msgs =
+        test_json_owned(chat_build_messages(NULL, items, 2, "reasoning", "openrouter", "m2", -1));
     a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT(json_object_get(a, "reasoning_details") == NULL);
-    EXPECT(json_object_get(a, "reasoning") == NULL);
-    json_decref(msgs);
+    EXPECT(test_json_get(a, "reasoning_details") == NULL);
+    EXPECT(test_json_get(a, "reasoning") == NULL);
+    test_json_release(msgs);
 }
 
 /* A reasoning-only turn (the leak case) still emits an assistant message so
@@ -177,16 +204,17 @@ static void test_reasoning_only_turn(void)
          .provider = "llama.cpp",
          .model = "m1"},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 1, "reasoning_content", "llama.cpp", "m1", -1);
+    test_json *msgs = test_json_owned(
+        chat_build_messages(NULL, items, 1, "reasoning_content", "llama.cpp", "m1", -1));
 
-    json_t *a = find_role(msgs, "assistant");
+    test_json *a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "reasoning_content")),
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "reasoning_content")),
                   "everything leaked here");
-    EXPECT(json_is_null(json_object_get(a, "content")));
-    EXPECT(json_object_get(a, "tool_calls") == NULL);
+    EXPECT(test_json_is_null(test_json_get(a, "content")));
+    EXPECT(test_json_get(a, "tool_calls") == NULL);
 
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
 /* A reasoning-only turn with replay disabled (field NULL) must NOT emit a
@@ -198,12 +226,13 @@ static void test_reasoning_only_field_null_emits_nothing(void)
         {.kind = ITEM_USER_MESSAGE, .text = "hi"},
         {.kind = ITEM_REASONING, .reasoning_text = "leaked cot, replay off"},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 2, NULL, "llama.cpp", "m1", -1);
+    test_json *msgs =
+        test_json_owned(chat_build_messages(NULL, items, 2, NULL, "llama.cpp", "m1", -1));
 
-    EXPECT(json_array_size(msgs) == 1); /* just the user message */
+    EXPECT(test_json_size(msgs) == 1); /* just the user message */
     EXPECT(find_role(msgs, "assistant") == NULL);
 
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
 /* Reasoning whose provenance stamp doesn't match the live provider/model is
@@ -218,13 +247,13 @@ static void test_reasoning_skipped_on_provenance_mismatch(void)
         {.kind = ITEM_REASONING, .reasoning_text = "codex cot", .provider = "codex", .model = "o3"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "From codex."},
     };
-    json_t *msgs =
-        chat_build_messages(NULL, provider_switch, 2, "reasoning_content", "llama.cpp", "m1", -1);
-    json_t *a = find_role(msgs, "assistant");
+    test_json *msgs = test_json_owned(
+        chat_build_messages(NULL, provider_switch, 2, "reasoning_content", "llama.cpp", "m1", -1));
+    test_json *a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT(json_object_get(a, "reasoning_content") == NULL); /* stale CoT dropped */
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "content")), "From codex.");
-    json_decref(msgs);
+    EXPECT(test_json_get(a, "reasoning_content") == NULL); /* stale CoT dropped */
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "content")), "From codex.");
+    test_json_release(msgs);
 
     /* Same provider, different model: an earlier llama.cpp/m0 turn is stale
      * once the user switches the served model to m1. */
@@ -235,12 +264,13 @@ static void test_reasoning_skipped_on_provenance_mismatch(void)
          .model = "m0"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "Older model."},
     };
-    msgs = chat_build_messages(NULL, model_switch, 2, "reasoning_content", "llama.cpp", "m1", -1);
+    msgs = test_json_owned(
+        chat_build_messages(NULL, model_switch, 2, "reasoning_content", "llama.cpp", "m1", -1));
     a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT(json_object_get(a, "reasoning_content") == NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "content")), "Older model.");
-    json_decref(msgs);
+    EXPECT(test_json_get(a, "reasoning_content") == NULL);
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "content")), "Older model.");
+    test_json_release(msgs);
 
     /* An unstamped reasoning item (older session record that never got a
      * stamp and no header to backfill from) is conservatively skipped. */
@@ -248,12 +278,13 @@ static void test_reasoning_skipped_on_provenance_mismatch(void)
         {.kind = ITEM_REASONING, .reasoning_text = "no stamp"},
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "Unstamped."},
     };
-    msgs = chat_build_messages(NULL, unstamped, 2, "reasoning_content", "llama.cpp", "m1", -1);
+    msgs = test_json_owned(
+        chat_build_messages(NULL, unstamped, 2, "reasoning_content", "llama.cpp", "m1", -1));
     a = find_role(msgs, "assistant");
     EXPECT(a != NULL);
-    EXPECT(json_object_get(a, "reasoning_content") == NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(a, "content")), "Unstamped.");
-    json_decref(msgs);
+    EXPECT(test_json_get(a, "reasoning_content") == NULL);
+    EXPECT_STR_EQ(test_json_string(test_json_get(a, "content")), "Unstamped.");
+    test_json_release(msgs);
 }
 
 /* A tool result carrying an image part: the `tool` message keeps string
@@ -273,71 +304,73 @@ static void test_tool_result_image_followup(void)
          .n_images = 1},
         {.kind = ITEM_TOOL_RESULT, .call_id = "c2", .output = "file1"},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 2, NULL, "llama.cpp", "m1", 1);
+    test_json *msgs =
+        test_json_owned(chat_build_messages(NULL, items, 2, NULL, "llama.cpp", "m1", 1));
 
     /* tool, tool, then the image user message — nothing interleaved. */
-    EXPECT(json_array_size(msgs) == 3);
-    json_t *m0 = json_array_get(msgs, 0);
-    json_t *m1 = json_array_get(msgs, 1);
-    json_t *m2 = json_array_get(msgs, 2);
-    EXPECT_STR_EQ(json_string_value(json_object_get(m0, "role")), "tool");
-    EXPECT_STR_EQ(json_string_value(json_object_get(m0, "tool_call_id")), "c1");
-    EXPECT(json_is_string(json_object_get(m0, "content")));
-    EXPECT_STR_EQ(json_string_value(json_object_get(m1, "role")), "tool");
-    EXPECT_STR_EQ(json_string_value(json_object_get(m1, "tool_call_id")), "c2");
-    EXPECT_STR_EQ(json_string_value(json_object_get(m2, "role")), "user");
-    json_t *parts = json_object_get(m2, "content");
-    EXPECT(json_is_array(parts));
-    EXPECT(json_array_size(parts) == 2);
-    json_t *img = json_array_get(parts, 1);
-    EXPECT_STR_EQ(json_string_value(json_object_get(img, "type")), "image_url");
-    const char *url = json_string_value(json_object_get(json_object_get(img, "image_url"), "url"));
+    EXPECT(test_json_size(msgs) == 3);
+    test_json *m0 = test_json_array_get(msgs, 0);
+    test_json *m1 = test_json_array_get(msgs, 1);
+    test_json *m2 = test_json_array_get(msgs, 2);
+    EXPECT_STR_EQ(test_json_string(test_json_get(m0, "role")), "tool");
+    EXPECT_STR_EQ(test_json_string(test_json_get(m0, "tool_call_id")), "c1");
+    EXPECT(test_json_is_string(test_json_get(m0, "content")));
+    EXPECT_STR_EQ(test_json_string(test_json_get(m1, "role")), "tool");
+    EXPECT_STR_EQ(test_json_string(test_json_get(m1, "tool_call_id")), "c2");
+    EXPECT_STR_EQ(test_json_string(test_json_get(m2, "role")), "user");
+    test_json *parts = test_json_get(m2, "content");
+    EXPECT(test_json_is_array(parts));
+    EXPECT(test_json_size(parts) == 2);
+    test_json *img = test_json_array_get(parts, 1);
+    EXPECT_STR_EQ(test_json_string(test_json_get(img, "type")), "image_url");
+    const char *url = test_json_string(test_json_get(test_json_get(img, "image_url"), "url"));
     EXPECT_STR_EQ(url, "data:image/png;base64,QUJD");
-    json_decref(msgs);
+    test_json_release(msgs);
 
     /* image_input == 0: no follow-up message; the placeholder is appended
      * to the tool message's string content instead. */
-    msgs = chat_build_messages(NULL, items, 2, NULL, "llama.cpp", "m1", 0);
-    EXPECT(json_array_size(msgs) == 2);
-    const char *content = json_string_value(json_object_get(json_array_get(msgs, 0), "content"));
+    msgs = test_json_owned(chat_build_messages(NULL, items, 2, NULL, "llama.cpp", "m1", 0));
+    EXPECT(test_json_size(msgs) == 2);
+    const char *content = test_json_string(test_json_get(test_json_array_get(msgs, 0), "content"));
     EXPECT(content && strstr(content, "Read image x.png") != NULL);
     EXPECT(strstr(content, "[image:") != NULL);
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
 static void test_control_characters_remain_json_safe(void)
 {
     char text[] = {'a', '\x01', 'b', '\0'};
     struct item items[] = {{.kind = ITEM_USER_MESSAGE, .text = text}};
-    json_t *messages = chat_build_messages(NULL, items, 1, NULL, "openrouter", "m", -1);
+    test_json *messages =
+        test_json_owned(chat_build_messages(NULL, items, 1, NULL, "openrouter", "m", -1));
 
-    EXPECT(json_array_size(messages) == 1);
+    EXPECT(test_json_size(messages) == 1);
     const char *decoded =
-        json_string_value(json_object_get(json_array_get(messages, 0), "content"));
+        test_json_string(test_json_get(test_json_array_get(messages, 0), "content"));
     EXPECT(decoded != NULL);
     if (decoded)
         EXPECT(decoded[0] == 'a' && decoded[1] == '\x01' && decoded[2] == 'b' &&
                decoded[3] == '\0');
-    json_decref(messages);
+    test_json_release(messages);
 }
 
 /* ---------- prompt cache breakpoints ---------- */
 
 /* The cache_control marker on a message's last content part, or NULL. */
-static json_t *breakpoint_of(json_t *msg)
+static test_json *breakpoint_of(test_json *msg)
 {
-    json_t *content = json_object_get(msg, "content");
-    if (!json_is_array(content) || json_array_size(content) == 0)
+    test_json *content = test_json_get(msg, "content");
+    if (!test_json_is_array(content) || test_json_size(content) == 0)
         return NULL;
-    json_t *last = json_array_get(content, json_array_size(content) - 1);
-    return json_object_get(last, "cache_control");
+    test_json *last = test_json_array_get(content, test_json_size(content) - 1);
+    return test_json_get(last, "cache_control");
 }
 
-static int count_breakpoints(json_t *msgs)
+static int count_breakpoints(test_json *msgs)
 {
     int n = 0;
-    for (size_t i = 0; i < json_array_size(msgs); i++)
-        if (breakpoint_of(json_array_get(msgs, i)))
+    for (size_t i = 0; i < test_json_size(msgs); i++)
+        if (breakpoint_of(test_json_array_get(msgs, i)))
             n++;
     return n;
 }
@@ -349,23 +382,24 @@ static void test_cache_breakpoints_system_and_tail(void)
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = (char *)"reply"},
         {.kind = ITEM_USER_MESSAGE, .text = (char *)"second"},
     };
-    json_t *msgs = chat_build_messages("sys", items, 3, NULL, "openrouter", "m", -1);
+    test_json *msgs =
+        test_json_owned(chat_build_messages("sys", items, 3, NULL, "openrouter", "m", -1));
     chat_apply_cache_breakpoints(msgs, "1h");
 
     /* Exactly two: the stable prefix and the rolling tail. */
     EXPECT(count_breakpoints(msgs) == 2);
-    json_t *sys = json_array_get(msgs, 0);
+    test_json *sys = test_json_array_get(msgs, 0);
     EXPECT(breakpoint_of(sys) != NULL);
     /* String content is promoted to the one-part array form, text intact. */
-    json_t *part = json_array_get(json_object_get(sys, "content"), 0);
-    EXPECT_STR_EQ(json_string_value(json_object_get(part, "type")), "text");
-    EXPECT_STR_EQ(json_string_value(json_object_get(part, "text")), "sys");
-    json_t *cc = breakpoint_of(sys);
-    EXPECT_STR_EQ(json_string_value(json_object_get(cc, "type")), "ephemeral");
-    EXPECT_STR_EQ(json_string_value(json_object_get(cc, "ttl")), "1h");
+    test_json *part = test_json_array_get(test_json_get(sys, "content"), 0);
+    EXPECT_STR_EQ(test_json_string(test_json_get(part, "type")), "text");
+    EXPECT_STR_EQ(test_json_string(test_json_get(part, "text")), "sys");
+    test_json *cc = breakpoint_of(sys);
+    EXPECT_STR_EQ(test_json_string(test_json_get(cc, "type")), "ephemeral");
+    EXPECT_STR_EQ(test_json_string(test_json_get(cc, "ttl")), "1h");
     /* The tail is the last message, not the last *user* one. */
-    EXPECT(breakpoint_of(json_array_get(msgs, json_array_size(msgs) - 1)) != NULL);
-    json_decref(msgs);
+    EXPECT(breakpoint_of(test_json_array_get(msgs, test_json_size(msgs) - 1)) != NULL);
+    test_json_release(msgs);
 }
 
 static void test_cache_breakpoint_lands_on_tool_result(void)
@@ -378,16 +412,17 @@ static void test_cache_breakpoint_lands_on_tool_result(void)
         {.kind = ITEM_TOOL_CALL, .call_id = (char *)"c1", .tool_name = (char *)"bash"},
         {.kind = ITEM_TOOL_RESULT, .call_id = (char *)"c1", .output = (char *)"output"},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 3, NULL, "openrouter", "m", -1);
+    test_json *msgs =
+        test_json_owned(chat_build_messages(NULL, items, 3, NULL, "openrouter", "m", -1));
     chat_apply_cache_breakpoints(msgs, "5m");
-    json_t *last = json_array_get(msgs, json_array_size(msgs) - 1);
-    EXPECT_STR_EQ(json_string_value(json_object_get(last, "role")), "tool");
+    test_json *last = test_json_array_get(msgs, test_json_size(msgs) - 1);
+    EXPECT_STR_EQ(test_json_string(test_json_get(last, "role")), "tool");
     EXPECT(breakpoint_of(last) != NULL);
     /* No system message here, so the tail carries the only breakpoint. */
     EXPECT(count_breakpoints(msgs) == 1);
     /* 5m is the wire default: the TTL field is omitted entirely. */
-    EXPECT(json_object_get(breakpoint_of(last), "ttl") == NULL);
-    json_decref(msgs);
+    EXPECT(test_json_get(breakpoint_of(last), "ttl") == NULL);
+    test_json_release(msgs);
 }
 
 static void test_cache_breakpoint_skips_contentless_assistant(void)
@@ -399,30 +434,32 @@ static void test_cache_breakpoint_skips_contentless_assistant(void)
         {.kind = ITEM_USER_MESSAGE, .text = (char *)"go"},
         {.kind = ITEM_TOOL_CALL, .call_id = (char *)"c1", .tool_name = (char *)"bash"},
     };
-    json_t *msgs = chat_build_messages(NULL, items, 2, NULL, "openrouter", "m", -1);
-    json_t *last = json_array_get(msgs, json_array_size(msgs) - 1);
-    EXPECT(json_is_null(json_object_get(last, "content")));
+    test_json *msgs =
+        test_json_owned(chat_build_messages(NULL, items, 2, NULL, "openrouter", "m", -1));
+    test_json *last = test_json_array_get(msgs, test_json_size(msgs) - 1);
+    EXPECT(test_json_is_null(test_json_get(last, "content")));
     chat_apply_cache_breakpoints(msgs, "1h");
     EXPECT(breakpoint_of(last) == NULL);
-    EXPECT(breakpoint_of(json_array_get(msgs, 0)) != NULL); /* the user message */
+    EXPECT(breakpoint_of(test_json_array_get(msgs, 0)) != NULL); /* the user message */
     EXPECT(count_breakpoints(msgs) == 1);
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
 static void test_cache_breakpoint_system_only(void)
 {
     /* Nothing but a system prompt: it takes the breakpoint once, and the
      * tail pass must not double-mark it. */
-    json_t *msgs = chat_build_messages("sys", NULL, 0, NULL, "openrouter", "m", -1);
+    test_json *msgs =
+        test_json_owned(chat_build_messages("sys", NULL, 0, NULL, "openrouter", "m", -1));
     chat_apply_cache_breakpoints(msgs, "1h");
-    EXPECT(json_array_size(msgs) == 1);
+    EXPECT(test_json_size(msgs) == 1);
     EXPECT(count_breakpoints(msgs) == 1);
-    json_decref(msgs);
+    test_json_release(msgs);
 }
 
-static json_t *encode_reasoning(enum chat_reasoning_format format, const char *effort)
+static test_json *encode_reasoning(enum chat_reasoning_format format, const char *effort)
 {
-    json_t *body = json_object();
+    test_json *body = test_json_owned(hax::json::value{hax::json::object{}});
     chat_apply_reasoning(body, format, effort);
     return body;
 }
@@ -440,46 +477,46 @@ static void test_reasoning_effort_unset_omitted(void)
 {
     const char *empties[] = {NULL, ""};
     for (size_t i = 0; i < 2; i++) {
-        json_t *flat = encode_reasoning(CHAT_REASONING_FLAT, empties[i]);
-        json_t *nested = encode_reasoning(CHAT_REASONING_NESTED, empties[i]);
-        EXPECT(json_object_size(flat) == 0);
-        EXPECT(json_object_size(nested) == 0);
-        json_decref(flat);
-        json_decref(nested);
+        test_json *flat = encode_reasoning(CHAT_REASONING_FLAT, empties[i]);
+        test_json *nested = encode_reasoning(CHAT_REASONING_NESTED, empties[i]);
+        EXPECT(test_json_object_size(flat) == 0);
+        EXPECT(test_json_object_size(nested) == 0);
+        test_json_release(flat);
+        test_json_release(nested);
     }
 }
 
 static void test_reasoning_effort_flat(void)
 {
-    json_t *body = encode_reasoning(CHAT_REASONING_FLAT, "high");
-    EXPECT(json_object_get(body, "reasoning") == NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "reasoning_effort")), "high");
-    json_decref(body);
+    test_json *body = encode_reasoning(CHAT_REASONING_FLAT, "high");
+    EXPECT(test_json_get(body, "reasoning") == NULL);
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "reasoning_effort")), "high");
+    test_json_release(body);
 
     body = encode_reasoning(CHAT_REASONING_FLAT, "none");
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "reasoning_effort")), "none");
-    json_decref(body);
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "reasoning_effort")), "none");
+    test_json_release(body);
 }
 
 static void test_reasoning_effort_nested(void)
 {
-    json_t *body = encode_reasoning(CHAT_REASONING_NESTED, "high");
-    EXPECT(json_object_get(body, "reasoning_effort") == NULL);
-    json_t *reasoning = json_object_get(body, "reasoning");
-    EXPECT(json_is_object(reasoning));
-    EXPECT(json_is_true(json_object_get(reasoning, "enabled")));
-    EXPECT_STR_EQ(json_string_value(json_object_get(reasoning, "effort")), "high");
-    json_decref(body);
+    test_json *body = encode_reasoning(CHAT_REASONING_NESTED, "high");
+    EXPECT(test_json_get(body, "reasoning_effort") == NULL);
+    test_json *reasoning = test_json_get(body, "reasoning");
+    EXPECT(test_json_is_object(reasoning));
+    EXPECT(test_json_is_true(test_json_get(reasoning, "enabled")));
+    EXPECT_STR_EQ(test_json_string(test_json_get(reasoning, "effort")), "high");
+    test_json_release(body);
 }
 
 static void test_reasoning_effort_nested_none_disables(void)
 {
-    json_t *body = encode_reasoning(CHAT_REASONING_NESTED, "none");
-    json_t *reasoning = json_object_get(body, "reasoning");
-    EXPECT(json_is_object(reasoning));
-    EXPECT(json_is_false(json_object_get(reasoning, "enabled")));
-    EXPECT(json_object_get(reasoning, "effort") == NULL);
-    json_decref(body);
+    test_json *body = encode_reasoning(CHAT_REASONING_NESTED, "none");
+    test_json *reasoning = test_json_get(body, "reasoning");
+    EXPECT(test_json_is_object(reasoning));
+    EXPECT(test_json_is_false(test_json_get(reasoning, "enabled")));
+    EXPECT(test_json_get(reasoning, "effort") == NULL);
+    test_json_release(body);
 }
 
 static void test_build_body_composition(void)
@@ -504,27 +541,27 @@ static void test_build_body_composition(void)
         .request_cost = 1,
     };
 
-    json_t *body = chat_build_body(&context, "prov", "model-1", &opts);
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "model")), "model-1");
-    EXPECT(json_object_get(body, "stream") == json_true());
-    EXPECT(json_is_true(json_object_get(json_object_get(body, "stream_options"), "include_usage")));
+    test_json *body = test_json_owned(chat_build_body(&context, "prov", "model-1", &opts));
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "model")), "model-1");
+    EXPECT(test_json_is_true(test_json_get(body, "stream")));
+    EXPECT(
+        test_json_is_true(test_json_get(test_json_get(body, "stream_options"), "include_usage")));
 
     /* Chat Completions nests function schemas, unlike the flat Responses declaration. */
-    json_t *tool = json_array_get(json_object_get(body, "tools"), 0);
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_object_get(tool, "function"), "name")),
-                  "read");
+    test_json *tool = test_json_array_get(test_json_get(body, "tools"), 0);
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_get(tool, "function"), "name")), "read");
 
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "prompt_cache_key")), "sess-1");
-    EXPECT(json_object_get(body, "return_progress") == json_true());
-    EXPECT(json_is_true(json_object_get(json_object_get(body, "usage"), "include")));
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "reasoning_effort")), "high");
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "prompt_cache_key")), "sess-1");
+    EXPECT(test_json_is_true(test_json_get(body, "return_progress")));
+    EXPECT(test_json_is_true(test_json_get(test_json_get(body, "usage"), "include")));
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "reasoning_effort")), "high");
 
     /* The system prompt leads the messages array and carries a cache breakpoint. */
-    json_t *first = json_array_get(json_object_get(body, "messages"), 0);
-    EXPECT_STR_EQ(json_string_value(json_object_get(first, "role")), "system");
+    test_json *first = test_json_array_get(test_json_get(body, "messages"), 0);
+    EXPECT_STR_EQ(test_json_string(test_json_get(first, "role")), "system");
     EXPECT(breakpoint_of(first) != NULL);
 
-    json_decref(body);
+    test_json_release(body);
 }
 
 static void test_cache_plan_follows_model_rates(void)
@@ -588,14 +625,14 @@ static void test_build_body_minimal_opts(void)
     struct context context = {.items = items, .n_items = 1, .image_input = 1};
     struct wire_body_opts opts = {0};
 
-    json_t *body = chat_build_body(&context, "prov", "model-1", &opts);
-    EXPECT(json_object_get(body, "tools") == NULL);
-    EXPECT(json_object_get(body, "prompt_cache_key") == NULL);
-    EXPECT(json_object_get(body, "return_progress") == NULL);
-    EXPECT(json_object_get(body, "usage") == NULL);
-    EXPECT(json_object_get(body, "reasoning_effort") == NULL);
-    EXPECT(count_breakpoints(json_object_get(body, "messages")) == 0);
-    json_decref(body);
+    test_json *body = test_json_owned(chat_build_body(&context, "prov", "model-1", &opts));
+    EXPECT(test_json_get(body, "tools") == NULL);
+    EXPECT(test_json_get(body, "prompt_cache_key") == NULL);
+    EXPECT(test_json_get(body, "return_progress") == NULL);
+    EXPECT(test_json_get(body, "usage") == NULL);
+    EXPECT(test_json_get(body, "reasoning_effort") == NULL);
+    EXPECT(count_breakpoints(test_json_get(body, "messages")) == 0);
+    test_json_release(body);
 }
 
 int main(void)
@@ -614,6 +651,7 @@ int main(void)
     test_reasoning_custom_field_name();
     test_codex_reasoning_json_ignored();
     test_reasoning_details_round_trip();
+    test_reasoning_details_preserve_large_integer();
     test_reasoning_details_supersede_text();
     test_reasoning_only_turn();
     test_reasoning_only_field_null_emits_nothing();

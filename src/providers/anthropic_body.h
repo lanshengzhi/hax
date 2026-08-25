@@ -2,8 +2,7 @@
 #ifndef HAX_PROVIDERS_ANTHROPIC_BODY_H
 #define HAX_PROVIDERS_ANTHROPIC_BODY_H
 
-#include <jansson.h>
-
+#include "json_value.h"
 #include "provider.h"
 
 /* Request-body construction for the Anthropic Messages dialect. */
@@ -19,20 +18,19 @@ enum anthropic_thinking_mode {
 extern const char *const ANTHROPIC_EFFORT_LADDER[];
 extern const size_t ANTHROPIC_EFFORT_LADDER_N;
 
-/* Translate transcript items into a newly allocated Messages API array. Opaque reasoning is
- * replayed only when its provider/model stamp matches the current request. Empty thinking
- * signatures become text unless `allow_empty_signature` is set. Tool-result images become image
- * blocks when `image_input` is nonzero, or text placeholders when it is zero. The caller must
- * json_decref the returned array. */
-json_t *anthropic_build_messages(const struct item *items, size_t n_items,
-                                 const char *current_provider, const char *current_model,
-                                 int allow_empty_signature, int image_input);
+/* Translate transcript items into a Messages API array. Opaque reasoning is replayed only when its
+ * provider/model stamp matches the current request. Empty thinking signatures become text unless
+ * `allow_empty_signature` is set. Tool-result images become image blocks when `image_input` is
+ * nonzero, or text placeholders when it is zero. */
+hax::json::value anthropic_build_messages(const struct item *items, size_t n_items,
+                                          const char *current_provider, const char *current_model,
+                                          int allow_empty_signature, int image_input);
 
 struct wire_body_opts; /* wire.h */
 
-/* Assemble the full Messages API request except the extra_body passthrough, which the wire
- * layer merges last. The caller must json_decref the result. */
-json_t *anthropic_build_body(const struct context *context, const char *provider_id,
-                             const char *model, const struct wire_body_opts *opts);
+/* Assemble the full Messages API request except the extra_body passthrough, which the wire layer
+ * merges last. */
+hax::json::value anthropic_build_body(const struct context *context, const char *provider_id,
+                                      const char *model, const struct wire_body_opts *opts);
 
 #endif /* HAX_PROVIDERS_ANTHROPIC_BODY_H */

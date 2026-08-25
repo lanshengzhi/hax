@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/chat_body.h"
 
-#include <jansson.h>
-#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <utility>
 
 #include "catalog.h"
 #include "provider.h"
@@ -25,75 +24,65 @@ struct chat_cache_plan chat_plan_cache(const struct catalog_entry *rates, enum c
     return plan;
 }
 
-json_t *chat_build_messages(const char *system_prompt, const struct item *items, size_t n_items,
-                            const char *reasoning_field, const char *current_provider,
-                            const char *current_model, int image_input)
+hax::json::value chat_build_messages(const char *system_prompt, const struct item *items,
+                                     size_t n_items, const char *reasoning_field,
+                                     const char *current_provider, const char *current_model,
+                                     int image_input)
 {
-    json_t *messages = json_array();
-    json_t *decoded = NULL;
-    json_t *result = messages;
     auto encoded =
         hax::openai_compat_json::build_chat_messages(system_prompt, items, n_items, reasoning_field,
                                                      current_provider, current_model, image_input);
-    if (!encoded)
-        goto out;
-
-    decoded = json_loads(encoded->c_str(), 0, NULL);
-    if (!json_is_array(decoded))
-        goto out;
-    json_decref(messages);
-    result = decoded;
-    decoded = NULL;
-
-out:
-    json_decref(decoded);
-    return result;
+    auto decoded = encoded ? hax::json::parse_array(*encoded, {.source = "Chat Completions request",
+                                                               .max_input_bytes = 0,
+                                                               .allow_unknown_keys = true})
+                           : std::nullopt;
+    return decoded ? std::move(*decoded) : hax::json::value(hax::json::array{});
 }
 
-static json_t *build_cache_control(const char *ttl)
+static hax::json::value build_cache_control(const char *ttl)
 {
-    json_t *cache_control = json_pack("{s:s}", "type", "ephemeral");
+    hax::json::value cache_control = hax::json::object{{"type", "ephemeral"}};
     if (ttl && strcasecmp(ttl, "1h") == 0)
-        json_object_set_new(cache_control, "ttl", json_string("1h"));
+        cache_control.set("ttl", "1h");
     return cache_control;
 }
 
-static int attach_cache_control(json_t *message, const char *ttl)
+static int attach_cache_control(hax::json::value *message, const char *ttl)
 {
-    json_t *content = json_object_get(message, "content");
-    if (json_is_string(content)) {
-        json_t *part = json_pack("{s:s, s:O}", "type", "text", "text", content);
-        json_object_set_new(part, "cache_control", build_cache_control(ttl));
-        json_t *parts = json_array();
-        json_array_append_new(parts, part);
-        json_object_set_new(message, "content", parts);
+    hax::json::value *content = message->find("content");
+    if (!content)
+        return 0;
+    if (content->is_string()) {
+        hax::json::value part = hax::json::object{{"type", "text"}, {"text", *content}};
+        part.set("cache_control", build_cache_control(ttl));
+        message->set("content", hax::json::array{std::move(part)});
         return 1;
     }
-    if (!json_is_array(content) || json_array_size(content) == 0)
+    if (!content->is_array() || content->array_items().empty())
         return 0;
 
-    json_t *last = json_array_get(content, json_array_size(content) - 1);
-    json_object_set_new(last, "cache_control", build_cache_control(ttl));
+    if (!content->array_items().back().is_object())
+        return 0;
+    content->array_items().back().set("cache_control", build_cache_control(ttl));
     return 1;
 }
 
-void chat_apply_cache_breakpoints(json_t *messages, const char *ttl)
+void chat_apply_cache_breakpoints(hax::json::value *messages, const char *ttl)
 {
-    size_t n_messages = json_array_size(messages);
-    if (n_messages == 0)
+    if (!messages->is_array() || messages->array_items().empty())
         return;
 
     size_t tail_floor = 0;
-    json_t *first = json_array_get(messages, 0);
-    const char *role = json_string_value(json_object_get(first, "role"));
-    if (role && strcmp(role, "system") == 0 && attach_cache_control(first, ttl))
+    hax::json::value &first = messages->array_items().front();
+    const hax::json::value *role = first.find("role");
+    if (role && role->is_string() && role->string_value() == "system" &&
+        attach_cache_control(&first, ttl))
         tail_floor = 1;
 
     /* A contentless tool-call message cannot carry the tail breakpoint. */
-    for (size_t i = n_messages; i-- > tail_floor;) {
-        if (attach_cache_control(json_array_get(messages, i), ttl))
+    for (size_t i = messages->array_items().size(); i-- > tail_floor;)
+        if (attach_cache_control(&messages->array_items()[i], ttl))
             return;
-    }
 }
 
 enum chat_reasoning_format chat_reasoning_format_parse(const char *value,
@@ -110,60 +99,67 @@ enum chat_reasoning_format chat_reasoning_format_parse(const char *value,
     return fallback;
 }
 
-void chat_apply_reasoning(json_t *body, enum chat_reasoning_format format, const char *effort)
+void chat_apply_reasoning(hax::json::value *body, enum chat_reasoning_format format,
+                          const char *effort)
 {
     if (!effort || !*effort)
         return;
 
     switch (format) {
     case CHAT_REASONING_FLAT:
-        json_object_set_new(body, "reasoning_effort", json_string(effort));
+        body->set("reasoning_effort", effort);
         break;
     case CHAT_REASONING_NESTED: {
-        int enabled = strcmp(effort, "none") != 0;
-        json_t *reasoning = json_pack("{s:b}", "enabled", enabled);
+        const bool enabled = strcmp(effort, "none") != 0;
+        hax::json::value reasoning = hax::json::object{{"enabled", enabled}};
         if (enabled)
-            json_object_set_new(reasoning, "effort", json_string(effort));
-        json_object_set_new(body, "reasoning", reasoning);
+            reasoning.set("effort", effort);
+        body->set("reasoning", std::move(reasoning));
         break;
     }
     }
 }
 
-static json_t *build_tools(const struct tool_def *tools, size_t n_tools)
+static hax::json::value build_tools(const struct tool_def *tools, size_t n_tools)
 {
-    json_t *tool_list = json_array();
+    hax::json::array tool_list;
     for (size_t i = 0; i < n_tools; i++) {
-        json_t *parameters = tool_schema_build(&tools[i]);
-        json_array_append_new(tool_list, json_pack("{s:s, s:{s:s, s:s, s:o}}", "type", "function",
-                                                   "function", "name", tools[i].name, "description",
-                                                   tools[i].description, "parameters", parameters));
+        hax::json::value function = hax::json::object{
+            {"name", tools[i].name},
+            {"description", tools[i].description},
+            {"parameters", tool_schema_value(&tools[i])},
+        };
+        tool_list.emplace_back(
+            hax::json::object{{"type", "function"}, {"function", std::move(function)}});
     }
     return tool_list;
 }
 
-json_t *chat_build_body(const struct context *context, const char *provider_id, const char *model,
-                        const struct wire_body_opts *opts)
+hax::json::value chat_build_body(const struct context *context, const char *provider_id,
+                                 const char *model, const struct wire_body_opts *opts)
 {
-    json_t *messages =
+    hax::json::value messages =
         chat_build_messages(context->system_prompt, context->items, context->n_items,
                             opts->reasoning_field, provider_id, model, context->image_input);
     if (opts->cache_markers)
-        chat_apply_cache_breakpoints(messages, opts->cache_ttl);
+        chat_apply_cache_breakpoints(&messages, opts->cache_ttl);
 
-    /* Usage is requested on every stream so terminal events can report token counts. */
-    json_t *body = json_pack("{s:s, s:b, s:o, s:{s:b}}", "model", model, "stream", 1, "messages",
-                             messages, "stream_options", "include_usage", 1);
+    hax::json::value body = hax::json::object{
+        {"model", model},
+        {"stream", true},
+        {"messages", std::move(messages)},
+        {"stream_options", hax::json::object{{"include_usage", true}}},
+    };
 
     if (context->n_tools > 0)
-        json_object_set_new(body, "tools", build_tools(context->tools, context->n_tools));
+        body.set("tools", build_tools(context->tools, context->n_tools));
     if (opts->session_cache_key)
-        json_object_set_new(body, "prompt_cache_key", json_string(opts->session_cache_key));
+        body.set("prompt_cache_key", opts->session_cache_key);
     if (opts->emit_progress)
-        json_object_set_new(body, "return_progress", json_true());
+        body.set("return_progress", true);
     if (opts->request_cost)
-        json_object_set_new(body, "usage", json_pack("{s:b}", "include", 1));
+        body.set("usage", hax::json::object{{"include", true}});
 
-    chat_apply_reasoning(body, opts->reasoning_format, context->effort);
+    chat_apply_reasoning(&body, opts->reasoning_format, context->effort);
     return body;
 }

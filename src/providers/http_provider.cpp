@@ -2,7 +2,6 @@
 #include "providers/http_provider.h"
 
 #include <fnmatch.h>
-#include <jansson.h>
 #include <limits.h>
 #include <optional>
 #include <stdlib.h>
@@ -59,12 +58,12 @@ struct http_provider {
     int allow_empty_signature;
     int cache_default; /* Messages cache_control default; chat uses cache_mode */
     char **extra_headers;
-    json_t *extra_body;
+    char *extra_body;
 
     const char *length_hint;    /* borrowed for the provider lifetime */
     const char *const *efforts; /* borrowed for the provider lifetime */
     size_t n_efforts;
-    void (*parse_model)(const json_t *entry, struct model_info *out);
+    void (*parse_model)(const char *entry, struct model_info *out);
 };
 
 static enum anthropic_thinking_mode resolve_thinking_mode(const struct http_provider *provider,
@@ -320,7 +319,7 @@ static void http_provider_destroy(struct provider *base)
     free(provider->cache_ttl);
     free(provider->reasoning_field);
     string_array_free(provider->extra_headers);
-    json_decref(provider->extra_body);
+    free(provider->extra_body);
     free(provider);
 }
 
@@ -435,13 +434,8 @@ static int http_provider_list_models(struct provider *base, struct model_info **
 
         model_info_init(&available[n_available]);
         available[n_available].id = xstrdup(entry.id->c_str());
-        if (provider->parse_model) {
-            json_t *decoded_entry = json_loads(entry.json.c_str(), 0, NULL);
-            if (decoded_entry) {
-                provider->parse_model(decoded_entry, &available[n_available]);
-                json_decref(decoded_entry);
-            }
-        }
+        if (provider->parse_model)
+            provider->parse_model(entry.json.c_str(), &available[n_available]);
         n_available++;
     }
 

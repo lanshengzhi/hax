@@ -2,8 +2,6 @@
 #ifndef HAX_PROVIDERS_HTTP_PROVIDER_H
 #define HAX_PROVIDERS_HTTP_PROVIDER_H
 
-#include <jansson.h>
-
 #include "provider.h"
 #include "providers/anthropic_body.h"
 #include "providers/chat_body.h"
@@ -52,7 +50,7 @@ struct http_provider_preset {
     const char *length_hint; /* borrowed for the provider lifetime */
 
     /* `out` is initialized and already owns the entry's id. */
-    void (*parse_model)(const json_t *entry, struct model_info *out);
+    void (*parse_model)(const char *entry, struct model_info *out);
 };
 
 /* Preset strings need only remain valid during construction unless marked borrowed above. */

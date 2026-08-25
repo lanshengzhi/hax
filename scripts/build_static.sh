@@ -92,7 +92,7 @@ as_root() {
 # version stamp.
 as_root apk add --no-cache -q \
     build-base git meson samurai python3 \
-    curl-dev curl-static jansson-dev jansson-static \
+    curl-dev curl-static \
     brotli-static c-ares-dev libidn2-static libpsl-static libunistring-static \
     nghttp2-static openssl-libs-static zlib-static zstd-static
 printf '%s\n' 'deps OK'

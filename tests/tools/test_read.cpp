@@ -752,7 +752,7 @@ static void test_read_collapse_generic_names_keep_parent(void)
 {
     expect_collapsed_path("skills/commit-helper/SKILL.md", ".../commit-helper/SKILL.md");
     expect_collapsed_path("docs/guides/README.md", ".../guides/README.md");
-    expect_collapsed_path("subprojects/jansson/meson.build", ".../jansson/meson.build");
+    expect_collapsed_path("subprojects/legacy-json/meson.build", ".../legacy-json/meson.build");
     expect_collapsed_path("a/pkg/__init__.py", ".../pkg/__init__.py");
     expect_collapsed_path("src/components/Button/index.tsx", ".../Button/index.tsx");
     expect_collapsed_path("project/cmd/serve/main.go", ".../serve/main.go");

@@ -2,8 +2,6 @@
 #ifndef HAX_PROVIDERS_LLAMACPP_H
 #define HAX_PROVIDERS_LLAMACPP_H
 
-#include <jansson.h>
-
 #include "provider.h"
 
 /* Construct the llama-server preset. */
@@ -29,7 +27,7 @@ int llamacpp_reconcile_model(const char *body, const char *configured_model,
 
 /* Populate picker metadata from a /v1/models entry: context from meta.n_ctx, image support from
  * architecture.input_modalities, and any router status other than "unloaded" as the description. */
-void llamacpp_parse_model(const json_t *entry, struct model_info *info);
+void llamacpp_parse_model(const char *entry, struct model_info *info);
 
 /* Return an allocated warning that displays GGUF model paths as extensionless filenames. */
 char *llamacpp_model_warning(const char *configured_model, const char *served_model);

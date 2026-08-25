@@ -2,8 +2,7 @@
 #ifndef HAX_PROVIDERS_WIRE_H
 #define HAX_PROVIDERS_WIRE_H
 
-#include <jansson.h>
-
+#include "json_value.h"
 #include "provider.h"
 #include "providers/anthropic_body.h"
 #include "providers/anthropic_events.h"
@@ -32,7 +31,7 @@ struct wire_events_opts {
 
 /* Per-request body options. Wires read only the fields their dialect defines. */
 struct wire_body_opts {
-    const json_t *extra_body; /* user passthrough, merged over the finished body */
+    const char *extra_body; /* borrowed; valid through wire_build_body(); compact user JSON */
     /* chat + anthropic: send explicit cache markers with this ttl */
     int cache_markers;
     const char *cache_ttl;
@@ -55,8 +54,8 @@ struct wire {
     const char *id;   /* canonical dialect name accepted by `api` config fields */
     const char *path; /* request path appended to the provider base URL */
     /* Compose one request minus the extra_body passthrough; wire_build_body finishes it. */
-    json_t *(*build_body)(const struct context *context, const char *provider_id, const char *model,
-                          const struct wire_body_opts *opts);
+    hax::json::value (*build_body)(const struct context *context, const char *provider_id,
+                                   const char *model, const struct wire_body_opts *opts);
     /* `opts` may be NULL. Free with events_free; a finalized parser still needs freeing. */
     void (*events_init)(union wire_events *events, stream_cb callback, void *callback_user,
                         const struct wire_events_opts *opts);

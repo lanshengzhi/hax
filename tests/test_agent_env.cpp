@@ -666,7 +666,7 @@ static void test_agents_md_invalid_bytes_sanitized(void)
     struct sandbox s;
     sb_init(&s);
     /* AGENTS.md with an embedded NUL and an invalid UTF-8 byte. The raw
-     * bytes would truncate the prompt under strlen and Jansson would
+     * bytes would truncate the prompt under strlen and the JSON parser would
      * reject the request as non-UTF-8 — utf8_sanitize must replace both
      * with U+FFFD before they enter the buffer. */
     char *git = xasprintf("%s/.git", s.root);

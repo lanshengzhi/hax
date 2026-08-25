@@ -1,115 +1,131 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/codex_auth.h"
 
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
 #include <string_view>
+#include <utility>
 
 #include "cred_store.h"
+#include "json_value.h"
 #include "util.h"
 #include "system/path.h"
 #include "text/base64.h"
 
 #define CODEX_CLI_AUTH_PATH "~/.codex/auth.json"
 
-static json_t *load_json(std::string_view input, json_error_t *error)
+static std::optional<hax::json::value> load_json(std::string_view input)
 {
     if (input.empty())
-        return NULL;
-    return json_loadb(input.data(), input.size(), 0, error);
+        return std::nullopt;
+    auto decoded = hax::json::parse_value(
+        input,
+        {.source = "Codex authentication", .max_input_bytes = 0, .allow_unknown_keys = true});
+    if (!decoded || !decoded->is_object())
+        return std::nullopt;
+    return std::move(*decoded);
 }
 
-static json_t *codex_jwt_payload(const char *jwt)
+static std::optional<hax::json::value> codex_jwt_payload(const char *jwt)
 {
     if (!jwt || !*jwt)
-        return NULL;
+        return std::nullopt;
 
     const char *payload_start = strchr(jwt, '.');
     if (!payload_start)
-        return NULL;
+        return std::nullopt;
     payload_start++;
 
     const char *payload_end = strchr(payload_start, '.');
     if (!payload_end)
-        return NULL;
+        return std::nullopt;
 
     unsigned char *payload =
         base64url_decode(payload_start, (size_t)(payload_end - payload_start), NULL);
     if (!payload)
-        return NULL;
+        return std::nullopt;
 
-    json_t *root = json_loads((char *)payload, 0, NULL);
+    auto root = load_json((char *)payload);
     free(payload);
     return root;
 }
 
+static const hax::json::value *member(const hax::json::value &root, const char *name)
+{
+    return root.is_object() ? root.find(name) : NULL;
+}
+
+static const char *string_member(const hax::json::value *root, const char *name)
+{
+    const hax::json::value *value = root ? member(*root, name) : NULL;
+    return value && value->is_string() ? value->string_value().c_str() : NULL;
+}
+
 char *codex_jwt_email(const char *jwt)
 {
-    json_t *payload = codex_jwt_payload(jwt);
+    auto payload = codex_jwt_payload(jwt);
     if (!payload)
         return NULL;
 
-    const char *email = json_string_value(json_object_get(payload, "email"));
+    const char *email = string_member(&*payload, "email");
     if (!email || !*email) {
-        json_t *profile = json_object_get(payload, "https://api.openai.com/profile");
-        email = json_string_value(json_object_get(profile, "email"));
+        const hax::json::value *profile = member(*payload, "https://api.openai.com/profile");
+        email = string_member(profile, "email");
     }
 
-    char *result = email && *email ? xstrdup(email) : NULL;
-    json_decref(payload);
-    return result;
+    return email && *email ? xstrdup(email) : NULL;
 }
 
 long codex_jwt_exp(const char *jwt)
 {
-    json_t *payload = codex_jwt_payload(jwt);
+    auto payload = codex_jwt_payload(jwt);
     if (!payload)
         return 0;
 
-    json_t *exp = json_object_get(payload, "exp");
-    long result = json_is_number(exp) ? (long)json_number_value(exp) : 0;
-    json_decref(payload);
+    const hax::json::value *exp = member(*payload, "exp");
+    if (!exp || !exp->is_number())
+        return 0;
+    long result = (long)exp->real_value();
     return result > 0 ? result : 0;
 }
 
 char *codex_jwt_account_id(const char *jwt)
 {
-    json_t *payload = codex_jwt_payload(jwt);
+    auto payload = codex_jwt_payload(jwt);
     if (!payload)
         return NULL;
 
-    json_t *auth_claim = json_object_get(payload, "https://api.openai.com/auth");
-    const char *account_id = json_string_value(json_object_get(auth_claim, "chatgpt_account_id"));
-    char *result = account_id && *account_id ? xstrdup(account_id) : NULL;
-    json_decref(payload);
-    return result;
+    const hax::json::value *auth_claim = member(*payload, "https://api.openai.com/auth");
+    const char *account_id = string_member(auth_claim, "chatgpt_account_id");
+    return account_id && *account_id ? xstrdup(account_id) : NULL;
 }
 
-static enum codex_auth_status auth_from_cli_root(const json_t *root, struct codex_auth *auth)
+static enum codex_auth_status auth_from_cli_root(const hax::json::value &root,
+                                                 struct codex_auth *auth)
 {
     memset(auth, 0, sizeof(*auth));
 
-    json_t *tokens = json_object_get(root, "tokens");
-    const char *access_token = json_string_value(json_object_get(tokens, "access_token"));
-    const char *account_id = json_string_value(json_object_get(tokens, "account_id"));
+    const hax::json::value *tokens = member(root, "tokens");
+    const char *access_token = string_member(tokens, "access_token");
+    const char *account_id = string_member(tokens, "account_id");
     if (!access_token || !*access_token || !account_id || !*account_id)
         return CODEX_AUTH_NO_TOKENS;
 
     auth->access_token = xstrdup(access_token);
     auth->account_id = xstrdup(account_id);
-    auth->email = codex_jwt_email(json_string_value(json_object_get(tokens, "id_token")));
+    auth->email = codex_jwt_email(string_member(tokens, "id_token"));
     auth->source = CODEX_AUTH_SOURCE_CODEX_CLI;
     return CODEX_AUTH_OK;
 }
 
-static enum codex_auth_status auth_from_store_root(const json_t *entry, struct codex_auth *auth)
+static enum codex_auth_status auth_from_store_root(const hax::json::value &entry,
+                                                   struct codex_auth *auth)
 {
     memset(auth, 0, sizeof(*auth));
 
-    const char *access_token = json_string_value(json_object_get(entry, "access_token"));
-    const char *refresh_token = json_string_value(json_object_get(entry, "refresh_token"));
-    const char *account_id = json_string_value(json_object_get(entry, "account_id"));
+    const char *access_token = string_member(&entry, "access_token");
+    const char *refresh_token = string_member(&entry, "refresh_token");
+    const char *account_id = string_member(&entry, "account_id");
     if (!access_token || !*access_token || !refresh_token || !*refresh_token || !account_id ||
         !*account_id)
         return CODEX_AUTH_NO_TOKENS;
@@ -117,7 +133,7 @@ static enum codex_auth_status auth_from_store_root(const json_t *entry, struct c
     auth->access_token = xstrdup(access_token);
     auth->refresh_token = xstrdup(refresh_token);
     auth->account_id = xstrdup(account_id);
-    auth->email = codex_jwt_email(json_string_value(json_object_get(entry, "id_token")));
+    auth->email = codex_jwt_email(string_member(&entry, "id_token"));
     auth->source = CODEX_AUTH_SOURCE_HAX;
     return CODEX_AUTH_OK;
 }
@@ -125,26 +141,22 @@ static enum codex_auth_status auth_from_store_root(const json_t *entry, struct c
 enum codex_auth_status codex_auth_from_json(std::string_view root_json, struct codex_auth *auth)
 {
     memset(auth, 0, sizeof(*auth));
-    json_t *root = load_json(root_json, NULL);
+    auto root = load_json(root_json);
     if (!root)
         return CODEX_AUTH_NO_TOKENS;
 
-    enum codex_auth_status status = auth_from_cli_root(root, auth);
-    json_decref(root);
-    return status;
+    return auth_from_cli_root(*root, auth);
 }
 
 enum codex_auth_status codex_auth_from_store_entry(std::string_view entry_json,
                                                    struct codex_auth *auth)
 {
     memset(auth, 0, sizeof(*auth));
-    json_t *entry = load_json(entry_json, NULL);
+    auto entry = load_json(entry_json);
     if (!entry)
         return CODEX_AUTH_NO_TOKENS;
 
-    enum codex_auth_status status = auth_from_store_root(entry, auth);
-    json_decref(entry);
-    return status;
+    return auth_from_store_root(*entry, auth);
 }
 
 static enum codex_auth_status load_codex_cli(struct codex_auth *auth, char **detail)
@@ -158,19 +170,23 @@ static enum codex_auth_status load_codex_cli(struct codex_auth *auth, char **det
             free(path);
         return CODEX_AUTH_NO_FILE;
     }
-    free(path);
 
-    json_error_t error;
-    json_t *root = json_loads(contents, 0, &error);
-    free(contents);
+    auto root = load_json(contents);
     if (!root) {
-        if (detail)
-            *detail = xstrdup(error.text);
+        if (detail) {
+            auto error = hax::json::parse_value(
+                contents, {.source = path, .max_input_bytes = 0, .allow_unknown_keys = true});
+            *detail = error ? xstrdup("expected a JSON object")
+                            : xstrdup(hax::json::format_error(error.error()).c_str());
+        }
+        free(contents);
+        free(path);
         return CODEX_AUTH_BAD_JSON;
     }
 
-    enum codex_auth_status status = auth_from_cli_root(root, auth);
-    json_decref(root);
+    enum codex_auth_status status = auth_from_cli_root(*root, auth);
+    free(contents);
+    free(path);
     return status;
 }
 

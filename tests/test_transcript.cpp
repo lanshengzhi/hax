@@ -255,7 +255,7 @@ static void test_tool_call_pretty_prints_args_without_id(void)
     free(out);
 }
 
-static void test_tool_call_invalid_json_dumps_verbatim(void)
+static void test_tool_call_invalid_json_renders_verbatim(void)
 {
     struct item items[] = {{
         .kind = ITEM_TOOL_CALL,
@@ -693,7 +693,7 @@ int main(void)
     test_user_multiline_raw();
     test_assistant_message();
     test_tool_call_pretty_prints_args_without_id();
-    test_tool_call_invalid_json_dumps_verbatim();
+    test_tool_call_invalid_json_renders_verbatim();
     test_tool_result_unshortened();
     test_read_result_dims_line_number_prefix();
     test_read_result_non_prefixed_lines_stay_plain();

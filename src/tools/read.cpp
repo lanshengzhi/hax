@@ -2,7 +2,6 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <jansson.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +10,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include "json_value.h"
 #include "provider.h"
 #include "tool.h"
 #include "util.h"
@@ -351,16 +351,17 @@ static int file_has_image_signature(const char *path)
     return bytes_read > 0 && image_sniff(header, (size_t)bytes_read, &info);
 }
 
-static char *parse_line_argument(json_t *root, const char *name, long *value, int *provided)
+static char *parse_line_argument(const hax::json::value *root, const char *name, long *value,
+                                 int *provided)
 {
-    json_t *argument = json_object_get(root, name);
+    const hax::json::value *argument = root->find(name);
     *provided = argument != NULL;
     if (!argument)
         return NULL;
-    if (!json_is_integer(argument))
+    if (!argument->is_integer())
         return xasprintf("'%s' must be an integer", name);
 
-    *value = (long)json_integer_value(argument);
+    *value = (long)argument->integer_value();
     if (*value < 1)
         return xasprintf("'%s' must be >= 1", name);
     return NULL;
@@ -406,10 +407,10 @@ static char *format_text_result(struct read_result *read_result, long offset, si
 
 static char *run(const char *args_json, struct tool_run_ctx *ctx)
 {
-    json_error_t json_error;
-    json_t *root = json_loads(args_json ? args_json : "{}", 0, &json_error);
+    auto root = hax::json::parse_value(args_json ? args_json : "{}",
+                                       {.source = "read arguments", .max_input_bytes = 0});
     if (!root)
-        return xasprintf("invalid arguments: %s", json_error.text);
+        return xasprintf("invalid arguments: %s", hax::json::format_error(root.error()).c_str());
 
     char *result = NULL;
     char *path = NULL;
@@ -418,7 +419,9 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
     long limit = 0;
     int offset_provided = 0;
     int limit_provided = 0;
-    const char *raw_path = json_string_value(json_object_get(root, "path"));
+    const hax::json::value *path_value = root->find("path");
+    const char *raw_path =
+        path_value && path_value->is_string() ? path_value->string_value().c_str() : NULL;
     if (!raw_path || !*raw_path) {
         result = xstrdup("missing 'path' argument");
         goto out;
@@ -426,10 +429,10 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
 
     offset = 1;
     limit = 0;
-    result = parse_line_argument(root, "offset", &offset, &offset_provided);
+    result = parse_line_argument(&*root, "offset", &offset, &offset_provided);
     if (result)
         goto out;
-    result = parse_line_argument(root, "limit", &limit, &limit_provided);
+    result = parse_line_argument(&*root, "limit", &limit, &limit_provided);
     if (result)
         goto out;
 
@@ -473,7 +476,6 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
 
 out:
     free(path);
-    json_decref(root);
     return result;
 }
 
@@ -494,20 +496,23 @@ static char *format_line_range(const char *args_json)
     if (!args_json)
         return NULL;
 
-    json_error_t json_error;
-    json_t *root = json_loads(args_json, 0, &json_error);
+    auto root =
+        hax::json::parse_value(args_json, {.source = "read arguments", .max_input_bytes = 0});
     if (!root)
         return NULL;
 
-    json_t *offset_json = json_object_get(root, "offset");
-    json_t *limit_json = json_object_get(root, "limit");
+    const hax::json::value *offset_json = root->find("offset");
+    const hax::json::value *limit_json = root->find("limit");
     char *range = NULL;
     int has_range = offset_json || limit_json;
-    const char *path = json_string_value(json_object_get(root, "path"));
+    const hax::json::value *path_value = root->find("path");
+    const char *path =
+        path_value && path_value->is_string() ? path_value->string_value().c_str() : NULL;
     if (has_range && !path_has_image_extension(path)) {
-        long offset = json_is_integer(offset_json) ? (long)json_integer_value(offset_json) : 1;
-        if (json_is_integer(limit_json)) {
-            long limit = (long)json_integer_value(limit_json);
+        long offset =
+            offset_json && offset_json->is_integer() ? (long)offset_json->integer_value() : 1;
+        if (limit_json && limit_json->is_integer()) {
+            long limit = (long)limit_json->integer_value();
             if (limit < 1) {
                 range = xasprintf(":%ld-", offset);
             } else {
@@ -519,7 +524,6 @@ static char *format_line_range(const char *args_json)
             range = xasprintf(":%ld-", offset);
         }
     }
-    json_decref(root);
     return range;
 }
 

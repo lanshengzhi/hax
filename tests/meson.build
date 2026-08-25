@@ -7,8 +7,8 @@
 #
 # Every test is a single .cpp file linked against `hax_dep`: lazy static-archive
 # linking pulls in only the production objects it transitively references, and
-# the dependency carries the libcurl/jansson/threads include dirs and link
-# flags — so a test needs nothing here but its source path.
+# the dependency carries the libcurl/Glaze/threads include dirs and link flags — so a
+# test needs nothing here but its source path.
 test_sources = [
     'test_agent.cpp',
     'test_agent_core.cpp',

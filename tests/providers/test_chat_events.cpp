@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "harness.h"
+#include "json_helpers.h"
 #include "provider.h"
 #include "providers/chat_events.h"
 
@@ -258,13 +258,13 @@ static void test_reasoning_text_fragments_rejoined(void)
 
     EXPECT(capture.n_events == 1);
     EXPECT(capture.events[0].kind == EV_REASONING_ITEM);
-    json_t *details = json_loads(capture.events[0].text, 0, NULL);
-    EXPECT(json_array_size(details) == 1);
-    json_t *block = json_array_get(details, 0);
-    EXPECT_STR_EQ(json_string_value(json_object_get(block, "text")), "Thinking");
-    EXPECT_STR_EQ(json_string_value(json_object_get(block, "signature")), "sig");
-    EXPECT_STR_EQ(json_string_value(json_object_get(block, "format")), "anthropic-claude-v1");
-    json_decref(details);
+    test_json *details = test_json_parse(capture.events[0].text);
+    EXPECT(test_json_size(details) == 1);
+    test_json *block = test_json_array_get(details, 0);
+    EXPECT_STR_EQ(test_json_string(test_json_get(block, "text")), "Thinking");
+    EXPECT_STR_EQ(test_json_string(test_json_get(block, "signature")), "sig");
+    EXPECT_STR_EQ(test_json_string(test_json_get(block, "format")), "anthropic-claude-v1");
+    test_json_release(details);
     EVENTS_FIXTURE_FREE(capture, parser);
 }
 
@@ -281,13 +281,13 @@ static void test_reasoning_details_join_text_only(void)
     feed_finish(&parser, "stop");
 
     EXPECT(capture.n_events == 1);
-    json_t *details = json_loads(capture.events[0].text, 0, NULL);
-    EXPECT(json_array_size(details) == 4);
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(details, 0), "text")), "one");
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(details, 1), "data")), "aa");
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(details, 2), "data")), "bb");
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(details, 3), "text")), "two");
-    json_decref(details);
+    test_json *details = test_json_parse(capture.events[0].text);
+    EXPECT(test_json_size(details) == 4);
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(details, 0), "text")), "one");
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(details, 1), "data")), "aa");
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(details, 2), "data")), "bb");
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(details, 3), "text")), "two");
+    test_json_release(details);
     EVENTS_FIXTURE_FREE(capture, parser);
 }
 
@@ -302,12 +302,42 @@ static void test_reasoning_text_keeps_first_signature(void)
                               "\"signature\":\"second\"}]}}]}");
     feed_finish(&parser, "stop");
 
-    json_t *details = json_loads(capture.events[0].text, 0, NULL);
-    EXPECT(json_array_size(details) == 1);
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(details, 0), "text")), "ab");
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(details, 0), "signature")),
+    test_json *details = test_json_parse(capture.events[0].text);
+    EXPECT(test_json_size(details) == 1);
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(details, 0), "text")), "ab");
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(details, 0), "signature")),
                   "first");
-    json_decref(details);
+    test_json_release(details);
+    EVENTS_FIXTURE_FREE(capture, parser);
+}
+
+static void test_reasoning_text_missing_initial_fragment(void)
+{
+    EVENTS_FIXTURE(capture, parser);
+    chat_events_feed(&parser, "{\"choices\":[{\"delta\":{\"reasoning_details\":"
+                              "[{\"type\":\"reasoning.text\"}]}}]}");
+    chat_events_feed(&parser, "{\"choices\":[{\"delta\":{\"reasoning_details\":"
+                              "[{\"type\":\"reasoning.text\",\"text\":\"tail\"}]}}]}");
+    feed_finish(&parser, "stop");
+
+    test_json *details = test_json_parse(capture.events[0].text);
+    EXPECT(test_json_size(details) == 1);
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(details, 0), "text")), "tail");
+    test_json_release(details);
+    EVENTS_FIXTURE_FREE(capture, parser);
+}
+
+static void test_reasoning_detail_preserves_large_integer(void)
+{
+    EVENTS_FIXTURE(capture, parser);
+    chat_events_feed(&parser, "{\"choices\":[{\"delta\":{\"reasoning_details\":"
+                              "[{\"type\":\"reasoning.encrypted\","
+                              "\"future\":9223372036854775808}]}}]}");
+    feed_finish(&parser, "stop");
+
+    EXPECT(capture.n_events == 1);
+    EXPECT(capture.events[0].kind == EV_REASONING_ITEM);
+    EXPECT(strstr(capture.events[0].text, "9223372036854775808") != NULL);
     EVENTS_FIXTURE_FREE(capture, parser);
 }
 
@@ -825,6 +855,8 @@ int main(void)
     test_reasoning_text_fragments_rejoined();
     test_reasoning_details_join_text_only();
     test_reasoning_text_keeps_first_signature();
+    test_reasoning_text_missing_initial_fragment();
+    test_reasoning_detail_preserves_large_integer();
     test_reasoning_details_absent_or_malformed();
     test_empty_reasoning_ignored();
     test_tool_call_lifecycle();

@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <limits.h>
 #include <stdio.h>
 
 #include "config.h"
+#include "json_value.h"
 #include "provider.h"
 #include "tool.h"
 #include "util.h"
@@ -14,41 +14,34 @@ static char *run_task_wait(const char *args_json, struct tool_run_ctx *ctx)
     if (config_bool("no_tasks"))
         return xstrdup("background tasks are disabled");
 
-    json_error_t json_error;
-    json_t *arguments = json_loads(args_json ? args_json : "{}", 0, &json_error);
+    auto arguments = hax::json::parse_value(
+        args_json ? args_json : "{}", {.source = "task_wait arguments", .max_input_bytes = 0});
     if (!arguments)
-        return xasprintf("invalid arguments: %s", json_error.text);
+        return xasprintf("invalid arguments: %s",
+                         hax::json::format_error(arguments.error()).c_str());
 
-    json_t *id_value = json_object_get(arguments, "id");
-    const char *id = json_string_value(id_value);
-    if (!id || !*id) {
-        json_decref(arguments);
+    const hax::json::value *id_value = arguments->find("id");
+    const char *id = id_value && id_value->is_string() ? id_value->string_value().c_str() : NULL;
+    if (!id || !*id)
         return xstrdup("missing 'id': name the task to wait on, e.g. \"t1\"");
-    }
 
-    json_t *kill_value = json_object_get(arguments, "kill");
-    if (kill_value && !json_is_boolean(kill_value)) {
-        json_decref(arguments);
+    const hax::json::value *kill_value = arguments->find("kill");
+    if (kill_value && !kill_value->is_boolean())
         return xstrdup("'kill' must be a boolean");
-    }
-    int kill_on_timeout = kill_value ? json_boolean_value(kill_value) : 0;
+    int kill_on_timeout = kill_value && kill_value->boolean_value();
 
     /* A kill with no timeout is immediate; a plain wait falls back to the configured window. */
     long timeout_ms = kill_on_timeout ? 0 : config_duration_ms("task.wait_timeout");
-    json_t *timeout_value = json_object_get(arguments, "timeout_seconds");
+    const hax::json::value *timeout_value = arguments->find("timeout_seconds");
     if (timeout_value) {
-        if (!json_is_integer(timeout_value) || json_integer_value(timeout_value) < 0) {
-            json_decref(arguments);
+        if (!timeout_value->is_integer() || timeout_value->integer_value() < 0)
             return xstrdup("'timeout_seconds' must be an integer >= 0");
-        }
-        long seconds = (long)json_integer_value(timeout_value);
+        long seconds = (long)timeout_value->integer_value();
         timeout_ms = seconds > LONG_MAX / 1000L ? LONG_MAX : seconds * 1000L;
     }
 
-    char *report = task_wait_stream(id, timeout_ms, kill_on_timeout, ctx ? ctx->display : NULL,
-                                    ctx ? ctx->display_data : NULL);
-    json_decref(arguments);
-    return report;
+    return task_wait_stream(id, timeout_ms, kill_on_timeout, ctx ? ctx->display : NULL,
+                            ctx ? ctx->display_data : NULL);
 }
 
 static const char TASK_WAIT_DESCRIPTION[] =
@@ -89,21 +82,22 @@ static const struct tool_def *task_wait_advertise(void)
  * back to raw JSON. */
 static char *format_wait_argument(const char *args_json)
 {
-    json_t *arguments = json_loads(args_json, 0, NULL);
+    auto arguments =
+        hax::json::parse_value(args_json, {.source = "task_wait arguments", .max_input_bytes = 0});
     if (!arguments)
         return NULL;
-    const char *id = json_string_value(json_object_get(arguments, "id"));
-    if (!id || !*id) {
-        json_decref(arguments);
+    const hax::json::value *id_value = arguments->find("id");
+    const char *id = id_value && id_value->is_string() ? id_value->string_value().c_str() : NULL;
+    if (!id || !*id)
         return NULL;
-    }
     struct buf out;
     buf_init(&out);
     buf_append_str(&out, id);
-    int kill = json_boolean_value(json_object_get(arguments, "kill"));
-    json_t *timeout = json_object_get(arguments, "timeout_seconds");
-    if (json_is_integer(timeout) && json_integer_value(timeout) > 0) {
-        long seconds = (long)json_integer_value(timeout);
+    const hax::json::value *kill_value = arguments->find("kill");
+    int kill = kill_value && kill_value->is_boolean() && kill_value->boolean_value();
+    const hax::json::value *timeout = arguments->find("timeout_seconds");
+    if (timeout && timeout->is_integer() && timeout->integer_value() > 0) {
+        long seconds = (long)timeout->integer_value();
         char duration[32];
         format_duration(duration, sizeof(duration),
                         seconds > LONG_MAX / 1000L ? LONG_MAX : seconds * 1000L);
@@ -116,7 +110,6 @@ static char *format_wait_argument(const char *args_json)
     } else if (kill) {
         buf_append_str(&out, " (kill)");
     }
-    json_decref(arguments);
     return buf_steal(&out);
 }
 

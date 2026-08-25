@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stddef.h>
 #include <stdlib.h>
 
+#include "json_value.h"
 #include "provider.h"
 #include "tool.h"
 #include "util.h"
@@ -25,10 +25,10 @@ static size_t count_lines(const char *content, size_t content_len)
 
 static char *run(const char *args_json, struct tool_run_ctx *ctx)
 {
-    json_error_t json_error;
-    json_t *root = json_loads(args_json ? args_json : "{}", 0, &json_error);
+    auto root = hax::json::parse_value(args_json ? args_json : "{}",
+                                       {.source = "write arguments", .max_input_bytes = 0});
     if (!root)
-        return xasprintf("invalid arguments: %s", json_error.text);
+        return xasprintf("invalid arguments: %s", hax::json::format_error(root.error()).c_str());
 
     char *result = NULL;
     char *path = NULL;
@@ -36,20 +36,22 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
     int created = 0;
     const char *content = NULL;
     size_t content_len = 0;
-    const char *raw_path = json_string_value(json_object_get(root, "path"));
-    json_t *content_json = json_object_get(root, "content");
+    const hax::json::value *path_value = root->find("path");
+    const hax::json::value *content_json = root->find("content");
+    const char *raw_path =
+        path_value && path_value->is_string() ? path_value->string_value().c_str() : NULL;
     if (!raw_path || !*raw_path) {
         result = xstrdup("missing 'path' argument");
         goto out;
     }
-    if (!json_is_string(content_json)) {
+    if (!content_json || !content_json->is_string()) {
         result = xstrdup("missing 'content' argument");
         goto out;
     }
 
     path = path_expand_home(raw_path);
-    content = json_string_value(content_json);
-    content_len = json_string_length(content_json);
+    content = content_json->string_value().data();
+    content_len = content_json->string_value().size();
 
     result = fs_write_with_diff(path, content, content_len, &error, &created);
     if (error) {
@@ -78,7 +80,6 @@ static char *run(const char *args_json, struct tool_run_ctx *ctx)
 
 out:
     free(path);
-    json_decref(root);
     return result;
 }
 

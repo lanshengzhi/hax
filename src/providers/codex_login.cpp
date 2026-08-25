@@ -2,7 +2,6 @@
 #include "providers/codex_login.h"
 
 #include <ctype.h>
-#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +9,7 @@
 
 #include "busy.h"
 #include "cred_store.h"
+#include "json_value.h"
 #include "trace.h"
 #include "util.h"
 #include "providers/codex_auth.h"
@@ -47,13 +47,13 @@
 
 /* ---------- pure protocol helpers ---------- */
 
-static long parse_interval_s(const json_t *interval)
+static long parse_interval_s(const hax::json::value *interval)
 {
     long seconds = 0;
-    if (json_is_integer(interval))
-        seconds = (long)json_integer_value(interval);
-    else if (json_is_string(interval))
-        seconds = strtol(json_string_value(interval), NULL, 10);
+    if (interval && interval->is_integer())
+        seconds = (long)interval->integer_value();
+    else if (interval && interval->is_string())
+        seconds = strtol(interval->string_value().c_str(), NULL, 10);
     if (seconds < 1)
         return CODEX_POLL_INTERVAL_DEFAULT_S;
     if (seconds > CODEX_POLL_INTERVAL_MAX_S)
@@ -61,27 +61,47 @@ static long parse_interval_s(const json_t *interval)
     return seconds;
 }
 
+static std::optional<hax::json::value> load_json(std::string_view input)
+{
+    if (input.empty())
+        return std::nullopt;
+    auto decoded = hax::json::parse_value(
+        input,
+        {.source = "Codex login response", .max_input_bytes = 0, .allow_unknown_keys = true});
+    if (!decoded)
+        return std::nullopt;
+    return std::move(*decoded);
+}
+
+static const hax::json::value *member(const hax::json::value *root, const char *name)
+{
+    return root && root->is_object() ? root->find(name) : NULL;
+}
+
+static const char *string_member(const hax::json::value *root, const char *name)
+{
+    const hax::json::value *value = member(root, name);
+    return value && value->is_string() ? value->string_value().c_str() : NULL;
+}
+
 int codex_login_parse_usercode(const char *body, struct codex_device_auth *out)
 {
     memset(out, 0, sizeof(*out));
-    json_t *root = body ? json_loads(body, 0, NULL) : NULL;
+    auto root = load_json(body ? body : "");
     if (!root)
         return -1;
 
-    const char *device_auth_id = json_string_value(json_object_get(root, "device_auth_id"));
-    const char *user_code = json_string_value(json_object_get(root, "user_code"));
+    const char *device_auth_id = string_member(&*root, "device_auth_id");
+    const char *user_code = string_member(&*root, "user_code");
     /* Older responses spell the field "usercode". */
     if (!user_code || !*user_code)
-        user_code = json_string_value(json_object_get(root, "usercode"));
-    if (!device_auth_id || !*device_auth_id || !user_code || !*user_code) {
-        json_decref(root);
+        user_code = string_member(&*root, "usercode");
+    if (!device_auth_id || !*device_auth_id || !user_code || !*user_code)
         return -1;
-    }
 
     out->device_auth_id = xstrdup(device_auth_id);
     out->user_code = xstrdup(user_code);
-    out->interval_s = parse_interval_s(json_object_get(root, "interval"));
-    json_decref(root);
+    out->interval_s = parse_interval_s(member(&*root, "interval"));
     return 0;
 }
 
@@ -93,46 +113,40 @@ void codex_device_auth_release(struct codex_device_auth *device_auth)
 }
 
 /* The endpoint reports errors as error.code, a bare error string, or a top-level code. */
-static const char *oauth_error_code(const json_t *root)
+static const char *oauth_error_code(const hax::json::value *root)
 {
-    json_t *error = json_object_get(root, "error");
-    const char *code = json_string_value(json_object_get(error, "code"));
+    const hax::json::value *error = member(root, "error");
+    const char *code = string_member(error, "code");
+    if (!code && error && error->is_string())
+        code = error->string_value().c_str();
     if (!code)
-        code = json_string_value(error);
-    if (!code)
-        code = json_string_value(json_object_get(root, "code"));
+        code = string_member(root, "code");
     return code;
 }
 
 enum codex_poll_result codex_login_classify_poll(long http_status, const char *body,
                                                  char **authorization_code, char **code_verifier)
 {
-    json_t *root = body ? json_loads(body, 0, NULL) : NULL;
+    auto root = load_json(body ? body : "");
 
     if (http_status >= 200 && http_status < 300) {
-        const char *code = json_string_value(json_object_get(root, "authorization_code"));
-        const char *verifier = json_string_value(json_object_get(root, "code_verifier"));
-        enum codex_poll_result result = CODEX_POLL_FAILED;
+        const char *code = string_member(root ? &*root : NULL, "authorization_code");
+        const char *verifier = string_member(root ? &*root : NULL, "code_verifier");
         if (code && *code && verifier && *verifier) {
             *authorization_code = xstrdup(code);
             *code_verifier = xstrdup(verifier);
-            result = CODEX_POLL_AUTHORIZED;
+            return CODEX_POLL_AUTHORIZED;
         }
-        json_decref(root);
-        return result;
+        return CODEX_POLL_FAILED;
     }
 
-    const char *error_code = oauth_error_code(root);
-    enum codex_poll_result result;
+    const char *error_code = oauth_error_code(root ? &*root : NULL);
     if (error_code && strcmp(error_code, "slow_down") == 0)
-        result = CODEX_POLL_SLOW_DOWN;
-    else if (http_status == 403 || http_status == 404 ||
-             (error_code && strstr(error_code, "authorization_pending")))
-        result = CODEX_POLL_PENDING;
-    else
-        result = CODEX_POLL_FAILED;
-    json_decref(root);
-    return result;
+        return CODEX_POLL_SLOW_DOWN;
+    if (http_status == 403 || http_status == 404 ||
+        (error_code && strstr(error_code, "authorization_pending")))
+        return CODEX_POLL_PENDING;
+    return CODEX_POLL_FAILED;
 }
 
 static void buf_append_form_value(struct buf *form, const char *value)
@@ -164,104 +178,69 @@ char *codex_login_build_exchange_body(const char *authorization_code, const char
     return buf_steal(&form);
 }
 
-static json_t *load_json(std::string_view input)
+static std::optional<std::string> dump_json(const hax::json::value &root)
 {
-    return input.empty() ? NULL : json_loadb(input.data(), input.size(), 0, NULL);
-}
-
-static std::optional<std::string> dump_json(json_t *root)
-{
-    if (!root)
-        return std::nullopt;
-    char *encoded = json_dumps(root, JSON_COMPACT);
-    json_decref(root);
+    auto encoded =
+        hax::json::serialize_value(root, {.source = "Codex credentials", .max_input_bytes = 0});
     if (!encoded)
         return std::nullopt;
-    std::string result(encoded);
-    free(encoded);
-    return result;
+    return std::move(*encoded);
 }
 
 static std::optional<std::string> entry_field(std::string_view entry, const char *field)
 {
-    json_t *root = load_json(entry);
-    if (!root)
-        return std::nullopt;
-    const char *value = json_string_value(json_object_get(root, field));
-    std::optional<std::string> result = value ? std::optional<std::string>(value) : std::nullopt;
-    json_decref(root);
-    return result;
+    auto root = load_json(entry);
+    const char *value = string_member(root ? &*root : NULL, field);
+    return value ? std::optional<std::string>(value) : std::nullopt;
 }
 
 std::optional<std::string> codex_login_entry_from_exchange(const char *body)
 {
-    json_t *root = NULL;
-    json_t *entry = NULL;
-    char *account_id = NULL;
-    const char *id_token = NULL;
-    const char *access_token = NULL;
-    const char *refresh_token = NULL;
-    std::optional<std::string> result;
-
-    root = body ? json_loads(body, 0, NULL) : NULL;
+    auto root = load_json(body ? body : "");
     if (!root)
-        goto out;
+        return std::nullopt;
 
-    id_token = json_string_value(json_object_get(root, "id_token"));
-    access_token = json_string_value(json_object_get(root, "access_token"));
-    refresh_token = json_string_value(json_object_get(root, "refresh_token"));
+    const char *id_token = string_member(&*root, "id_token");
+    const char *access_token = string_member(&*root, "access_token");
+    const char *refresh_token = string_member(&*root, "refresh_token");
     if (!id_token || !*id_token || !access_token || !*access_token || !refresh_token ||
         !*refresh_token)
-        goto out;
+        return std::nullopt;
 
     /* The account id is fixed at login: refresh responses may omit the id_token, so it cannot be
      * re-derived later. */
-    account_id = codex_jwt_account_id(id_token);
+    char *account_id = codex_jwt_account_id(id_token);
     if (!account_id)
         account_id = codex_jwt_account_id(access_token);
     if (!account_id)
-        goto out;
+        return std::nullopt;
 
-    entry = json_pack("{s:s, s:s, s:s, s:s}", "access_token", access_token, "refresh_token",
-                      refresh_token, "id_token", id_token, "account_id", account_id);
-    if (!entry)
-        goto out;
-    result = dump_json(entry);
-    entry = NULL; /* dump_json releases it. */
-
-out:
-    json_decref(entry);
+    hax::json::value entry = hax::json::object{{"access_token", access_token},
+                                               {"refresh_token", refresh_token},
+                                               {"id_token", id_token},
+                                               {"account_id", account_id}};
     free(account_id);
-    json_decref(root);
-    return result;
+    return dump_json(entry);
 }
 
 std::optional<std::string> codex_login_apply_refresh(std::string_view entry, const char *body)
 {
-    json_t *entry_root = load_json(entry);
-    json_t *root = body ? json_loads(body, 0, NULL) : NULL;
-    const char *access_token = NULL;
-    std::optional<std::string> result;
-    if (!entry_root || !root || !json_is_object(entry_root))
-        goto out;
+    auto entry_root = load_json(entry);
+    auto root = load_json(body ? body : "");
+    if (!entry_root || !entry_root->is_object() || !root)
+        return std::nullopt;
 
-    access_token = json_string_value(json_object_get(root, "access_token"));
+    const char *access_token = string_member(&*root, "access_token");
     if (!access_token || !*access_token)
-        goto out;
+        return std::nullopt;
 
     static const char *const FIELDS[] = {"access_token", "refresh_token", "id_token"};
-    for (size_t i = 0; i < sizeof(FIELDS) / sizeof(FIELDS[0]); i++) {
-        const char *value = json_string_value(json_object_get(root, FIELDS[i]));
+    for (const char *field : FIELDS) {
+        const char *value = string_member(&*root, field);
         if (value && *value)
-            json_object_set_new(entry_root, FIELDS[i], json_string(value));
+            entry_root->set(field, value);
     }
-    result = dump_json(entry_root);
-    entry_root = NULL; /* dump_json releases it. */
-
-out:
-    json_decref(root);
-    json_decref(entry_root);
-    return result;
+    return dump_json(*entry_root);
 }
 
 /* ---------- refresh lifecycle ---------- */
@@ -284,11 +263,11 @@ int codex_login_token_expiring(const char *access_token, long margin_s)
     return exp <= time(NULL) + margin_s;
 }
 
-static char *dump_compact(json_t *root)
+static char *dump_compact(const hax::json::value &root)
 {
-    char *body = json_dumps(root, JSON_COMPACT);
-    json_decref(root);
-    return body;
+    auto encoded =
+        hax::json::serialize_value(root, {.source = "Codex login request", .max_input_bytes = 0});
+    return encoded ? xstrdup(encoded->c_str()) : NULL;
 }
 
 struct refresh_tx {
@@ -310,16 +289,14 @@ int codex_login_refresh_rejected(long http_status, const char *body)
     if (http_status < 400 || http_status >= 500)
         return 0;
 
-    json_t *root = body ? json_loads(body, 0, NULL) : NULL;
-    const char *code = oauth_error_code(root);
+    auto root = load_json(body ? body : "");
+    const char *code = oauth_error_code(root ? &*root : NULL);
     static const char *const TERMINAL[] = {"invalid_grant", "refresh_token_expired",
                                            "refresh_token_reused", "refresh_token_invalidated"};
-    int rejected = 0;
     for (size_t i = 0; code && i < sizeof(TERMINAL) / sizeof(TERMINAL[0]); i++)
         if (strcmp(code, TERMINAL[i]) == 0)
-            rejected = 1;
-    json_decref(root);
-    return rejected;
+            return 1;
+    return 0;
 }
 
 /* A dispatched rotation must complete even when the user cancels the surrounding operation: the
@@ -379,9 +356,11 @@ static enum cred_store_verdict refresh_transaction(std::optional<std::string_vie
     std::string refresh_token =
         entry_differs && !entry_as_fresh ? tx->current_refresh_token : *entry_refresh;
     trace_register_secret(refresh_token.c_str());
-    char *request_body =
-        dump_compact(json_pack("{s:s, s:s, s:s}", "client_id", CODEX_OAUTH_CLIENT_ID, "grant_type",
-                               "refresh_token", "refresh_token", refresh_token.c_str()));
+    char *request_body = dump_compact(hax::json::value{hax::json::object{
+        {"client_id", CODEX_OAUTH_CLIENT_ID},
+        {"grant_type", "refresh_token"},
+        {"refresh_token", refresh_token},
+    }});
     char *response = NULL;
     long status = 0;
     struct rotation_tick_guard tick_guard = {.tick = tx->tick, .tick_user = tx->tick_user};
@@ -497,7 +476,8 @@ int codex_login_present(void)
 
 static int request_usercode(struct codex_device_auth *device_auth)
 {
-    char *request_body = dump_compact(json_pack("{s:s}", "client_id", CODEX_OAUTH_CLIENT_ID));
+    char *request_body =
+        dump_compact(hax::json::value{hax::json::object{{"client_id", CODEX_OAUTH_CLIENT_ID}}});
 
     struct busy *busy = busy_begin("contacting auth.openai.com...");
     char *response = NULL;
@@ -538,9 +518,10 @@ static int request_usercode(struct codex_device_auth *device_auth)
 static int poll_for_authorization(const struct codex_device_auth *device_auth,
                                   char **authorization_code, char **code_verifier)
 {
-    char *poll_body =
-        dump_compact(json_pack("{s:s, s:s}", "device_auth_id", device_auth->device_auth_id,
-                               "user_code", device_auth->user_code));
+    char *poll_body = dump_compact(hax::json::value{hax::json::object{
+        {"device_auth_id", device_auth->device_auth_id},
+        {"user_code", device_auth->user_code},
+    }});
     long interval_ms = device_auth->interval_s * 1000;
     long deadline = monotonic_ms() + CODEX_DEVICE_DEADLINE_MS;
     char *error = NULL;
@@ -659,9 +640,11 @@ static std::optional<std::string> exchange_authorization_code(const char *author
 static int revoke_refresh_token(const char *refresh_token, const char *busy_label)
 {
     trace_register_secret(refresh_token);
-    char *request_body =
-        dump_compact(json_pack("{s:s, s:s, s:s}", "token", refresh_token, "token_type_hint",
-                               "refresh_token", "client_id", CODEX_OAUTH_CLIENT_ID));
+    char *request_body = dump_compact(hax::json::value{hax::json::object{
+        {"token", refresh_token},
+        {"token_type_hint", "refresh_token"},
+        {"client_id", CODEX_OAUTH_CLIENT_ID},
+    }});
     struct busy *busy = busy_begin(busy_label);
     char *response = NULL;
     long status = 0;

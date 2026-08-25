@@ -46,18 +46,25 @@ struct error {
     std::string message;                /* Actionable parser or serializer diagnostic. */
 };
 
-/* A project-owned dynamic JSON value. Integers retain their signed 64-bit representation instead
- * of passing through double, and object members retain their input order. The adapter owns parsing
- * and serialization; domain code only observes or mutates this representation. */
+/* A validated raw JSON fragment used when a value does not fit the dynamic representation. The
+ * fragment owns its bytes and the serializer emits them without changing their JSON type. */
+struct raw_value {
+    std::string json;
+};
+
 struct value;
 using array = std::vector<value>;
 using object = std::vector<std::pair<std::string, value>>;
 
+/* A project-owned dynamic JSON value. Integers retain their signed 64-bit representation instead
+ * of passing through double, and object members retain their input order. The adapter owns parsing
+ * and serialization; domain code only observes or mutates this representation. */
 class value
 {
   public:
     using integer = std::int64_t;
-    using storage = std::variant<std::nullptr_t, bool, integer, double, std::string, array, object>;
+    using storage =
+        std::variant<std::nullptr_t, bool, integer, double, std::string, array, object, raw_value>;
 
   private:
     storage data = nullptr;
@@ -88,6 +95,10 @@ class value
     {
     }
     value(object source) : data(std::move(source))
+    {
+    }
+    /* `source.json` must contain one complete, already validated JSON value. */
+    value(raw_value source) : data(std::move(source))
     {
     }
 
@@ -123,6 +134,10 @@ class value
     {
         return std::holds_alternative<object>(data);
     }
+    bool is_raw() const
+    {
+        return std::holds_alternative<raw_value>(data);
+    }
 
     bool boolean_value() const
     {
@@ -140,7 +155,35 @@ class value
     {
         return std::get<std::string>(data);
     }
+    const std::string &raw_json() const
+    {
+        return std::get<raw_value>(data).json;
+    }
+    const std::string *string_ptr() const noexcept
+    {
+        return std::get_if<std::string>(&data);
+    }
+    const bool *boolean_ptr() const noexcept
+    {
+        return std::get_if<bool>(&data);
+    }
+    const integer *integer_ptr() const noexcept
+    {
+        return std::get_if<integer>(&data);
+    }
+    const double *real_ptr() const noexcept
+    {
+        return std::get_if<double>(&data);
+    }
 
+    const array *array_ptr() const noexcept
+    {
+        return std::get_if<array>(&data);
+    }
+    array *array_ptr() noexcept
+    {
+        return std::get_if<array>(&data);
+    }
     const array &array_items() const
     {
         return std::get<array>(data);
@@ -148,6 +191,14 @@ class value
     array &array_items()
     {
         return std::get<array>(data);
+    }
+    const object *object_ptr() const noexcept
+    {
+        return std::get_if<object>(&data);
+    }
+    object *object_ptr() noexcept
+    {
+        return std::get_if<object>(&data);
     }
     const object &object_items() const
     {
@@ -211,14 +262,14 @@ class value
         return false;
     }
 
-    size_t size() const
+    size_t size() const noexcept
     {
-        if (is_array())
-            return array_items().size();
-        if (is_object())
-            return object_items().size();
-        if (is_string())
-            return string_value().size();
+        if (const auto *items = std::get_if<array>(&data))
+            return items->size();
+        if (const auto *members = std::get_if<object>(&data))
+            return members->size();
+        if (const auto *text = std::get_if<std::string>(&data))
+            return text->size();
         return 0;
     }
 };
@@ -232,6 +283,10 @@ std::string format_error(const error &value);
 
 /* Parse one complete JSON document into the project-owned dynamic value. */
 std::expected<value, error> parse_value(std::string_view input, options options = {});
+
+/* Parse one complete JSON document and require an array root. Values outside the dynamic integer
+ * range remain as validated raw fragments. */
+std::optional<value> parse_array(std::string_view input, options options = {});
 
 /* Serialize a project-owned dynamic value into compact JSON. */
 std::expected<std::string, error> serialize_value(const value &source, options options = {});

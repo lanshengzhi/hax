@@ -13,16 +13,16 @@ notes (see [docs/releasing.md](docs/releasing.md)).
   tests now compile with the C++23 toolchain while preserving the existing provider and tool
   interfaces.
 - Pin the header-only Glaze v8.1.0 JSON dependency to a verified Meson source archive and expose
-  it only through the project-owned JSON adapter while preserving Jansson for existing paths.
+  it through the project-owned JSON adapter as the sole JSON implementation.
 - Persist durable session items through typed Glaze records while retaining the existing session
   format and canonical conversation item model.
 - Route configuration and model-catalog metadata through the project-owned JSON adapter while
   preserving selection, pricing, tier, and fallback behavior.
 - Keep provider credentials opaque at the credential-store boundary while preserving atomic 0600
   persistence and leaving malformed stores untouched.
-- Route trace, transcript, and history JSON through the project-owned adapter while preserving
-  redaction, opaque fragments, replay, reconstruction, and plain-output behavior; remaining
-  production Jansson boundaries are inventoried in
+- Route trace, transcript, history, provider, tool, catalog, config, and credential JSON through
+  the project-owned adapter while preserving redaction, opaque fragments, replay, reconstruction,
+  and plain-output behavior; the final migration evidence is recorded in
   [docs/json-boundaries.md](docs/json-boundaries.md).
 - Update the llama.cpp convenience provider's default llama-server port to 9931; the
   `HAX_LLAMACPP_PORT` and `HAX_LLAMACPP_BASE_URL` overrides remain available.

@@ -214,6 +214,10 @@ static std::expected<void, error> append_value(const value &source, std::string 
     }
     if (source.is_string())
         return append_scalar(source.string_value(), output, options);
+    if (source.is_raw()) {
+        output += source.raw_json();
+        return {};
+    }
     if (source.is_array()) {
         output.push_back('[');
         for (size_t i = 0; i < source.array_items().size(); i++) {
@@ -265,6 +269,52 @@ std::expected<value, error> parse_value(std::string_view input, options options)
     if (glaze_error)
         return std::unexpected(detail::from_read_error(glaze_error, input, options));
     return from_generic(decoded);
+}
+
+/* Dynamic values reject integers outside int64_t; recurse through validated containers so their
+ * envelopes remain mutable while unrepresentable leaves stay exact raw JSON fragments. */
+static std::optional<value> parse_preserving_raw(std::string_view input, options options)
+{
+    auto decoded = parse_value(input, options);
+    if (decoded)
+        return std::move(*decoded);
+
+    if (!validate(input, options))
+        return std::nullopt;
+    auto document = glz::lazy_json(input);
+    if (!document)
+        return std::nullopt;
+
+    if (document->root().is_array()) {
+        value result = array{};
+        for (const auto &member : document->root()) {
+            auto child = parse_preserving_raw(member.raw_json(), options);
+            result.array_items().emplace_back(
+                child ? std::move(*child) : value(raw_value{std::string(member.raw_json())}));
+        }
+        return result;
+    }
+
+    if (document->root().is_object()) {
+        value result = object{};
+        for (const auto &member : document->root()) {
+            auto child = parse_preserving_raw(member.raw_json(), options);
+            result.object_items().emplace_back(
+                std::string(member.key()),
+                child ? std::move(*child) : value(raw_value{std::string(member.raw_json())}));
+        }
+        return result;
+    }
+
+    return value(raw_value{std::string(input)});
+}
+
+std::optional<value> parse_array(std::string_view input, options options)
+{
+    auto decoded = parse_preserving_raw(input, options);
+    if (!decoded || !decoded->is_array())
+        return std::nullopt;
+    return decoded;
 }
 
 std::expected<std::string, error> serialize_value(const value &source, options options)

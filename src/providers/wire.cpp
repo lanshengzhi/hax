@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/wire.h"
 
-#include <jansson.h>
 #include <stddef.h>
 #include <strings.h>
 
 #include "provider.h"
+#include "util.h"
 #include "providers/anthropic_body.h"
 #include "providers/anthropic_events.h"
 #include "providers/chat_body.h"
@@ -17,11 +17,11 @@
 char *wire_build_body(const struct wire *wire, const struct context *context,
                       const char *provider_id, const char *model, const struct wire_body_opts *opts)
 {
-    json_t *body = wire->build_body(context, provider_id, model, opts);
-    provider_extra_body_apply(body, opts->extra_body);
-    char *json = json_dumps(body, JSON_COMPACT);
-    json_decref(body);
-    return json;
+    hax::json::value body = wire->build_body(context, provider_id, model, opts);
+    provider_extra_body_apply(&body, opts ? opts->extra_body : NULL);
+    auto encoded =
+        hax::json::serialize_value(body, {.source = "wire request", .max_input_bytes = 0});
+    return encoded ? xstrdup(encoded->c_str()) : NULL;
 }
 
 static void chat_init(union wire_events *events, stream_cb callback, void *callback_user,

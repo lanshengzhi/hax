@@ -2,8 +2,6 @@
 #ifndef HAX_PROVIDERS_OPENROUTER_H
 #define HAX_PROVIDERS_OPENROUTER_H
 
-#include <jansson.h>
-
 #include "provider.h"
 
 /* Construct the OpenRouter preset; the base URL is fixed to openrouter.ai. */
@@ -11,11 +9,11 @@ struct provider *openrouter_provider_new(const char *id);
 
 /* Parse one OpenRouter /models entry into initialized `info`. Newly allocated fields are owned by
  * `info`; unreported fields retain their unknown values. */
-void openrouter_parse_model(const json_t *entry, struct model_info *info);
+void openrouter_parse_model(const char *entry, struct model_info *info);
 
 /* Parse categorical reasoning levels from one OpenRouter /models entry. An absent level list leaves
  * `efforts` unknown unless the entry explicitly excludes reasoning parameters. */
-void openrouter_parse_efforts(const json_t *entry, struct effort_set *efforts);
+void openrouter_parse_efforts(const char *entry, struct effort_set *efforts);
 
 /* Parse the exact `model` from a filtered /models response into initialized `info`. */
 void openrouter_parse_model_probe_response(const char *body, const char *model,

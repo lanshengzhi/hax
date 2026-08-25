@@ -144,8 +144,8 @@ Extension workflows:
   OOM. No arenas.
 - Use kernel-style goto cleanup for multi-resource functions, with labels in reverse
   acquisition order.
-- Always release owned resources on success and all early exits: `json_decref` jansson roots,
-  `curl_easy_cleanup` handles, `free` buffers, etc.
+- Always release owned resources on success and all early exits: JSON roots, `curl_easy_cleanup`
+  handles, `free` buffers, etc.
 - Avoid non-portable kernel idioms: no `likely()`/`unlikely()`, `BUG_ON`, `ERR_PTR`, or
   `kmalloc`. Use `<stdint.h>` types and plain negative-int returns plus `errno`.
 - Markdown is hard-wrapped around 100 columns, same as code.

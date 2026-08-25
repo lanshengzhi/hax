@@ -206,6 +206,7 @@ static void test_apply_refresh_merges(void)
      * must not damage the stored rotation state. */
     EXPECT(!codex_login_apply_refresh(entry, "{\"refresh_token\":\"other\"}").has_value());
     EXPECT(!codex_login_apply_refresh(entry, "not json").has_value());
+    EXPECT(!codex_login_apply_refresh("null", "{\"access_token\":\"new-at\"}").has_value());
     expect_entry_field(entry, "refresh_token", "old-rt");
 }
 

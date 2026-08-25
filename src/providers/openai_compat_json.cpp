@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <jansson.h>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -301,6 +300,8 @@ namespace
 {
 
 using hax::openai_compat_json::detail::raw_json;
+using raw_array = std::vector<raw_json>;
+using raw_object = std::vector<std::pair<std::string, raw_json>>;
 
 constexpr hax::json::options PROVIDER_JSON_OPTIONS = {
     .source = "OpenAI-compatible provider",
@@ -435,57 +436,161 @@ static bool entry_names_model(const hax::openai_compat_json::detail::raw_llama_e
     return false;
 }
 
-static bool is_reasoning_text(const json_t *detail)
+static const raw_json *raw_member(const raw_object &object, const char *name)
 {
-    const char *type = json_string_value(json_object_get(detail, "type"));
-    return type && strcmp(type, "reasoning.text") == 0;
+    for (const auto &member : object)
+        if (member.first == name)
+            return &member.second;
+    return NULL;
 }
 
-static bool has_member(const json_t *detail, const char *name)
+static raw_json *raw_member(raw_object &object, const char *name)
 {
-    json_t *value = json_object_get(detail, name);
-    const char *text = json_string_value(value);
-    return value && !json_is_null(value) && (!text || *text);
+    for (auto &member : object)
+        if (member.first == name)
+            return &member.second;
+    return NULL;
 }
 
-static char *append_reasoning_detail_jansson(const char *current, std::string_view detail)
+static bool raw_is_null(const raw_json &source)
 {
-    json_t *block = json_loadb(detail.data(), detail.size(), 0, NULL);
-    json_t *details = NULL;
-    json_t *last = NULL;
-    char *encoded = NULL;
-    if (!json_is_object(block))
-        goto out;
+    size_t first = 0;
+    while (first < source.str.size() && (source.str[first] == ' ' || source.str[first] == '\t' ||
+                                         source.str[first] == '\n' || source.str[first] == '\r'))
+        first++;
+    return source.str.substr(first, 4) == "null";
+}
 
-    details = current ? json_loads(current, 0, NULL) : json_array();
-    if (!json_is_array(details))
-        goto out;
+static std::optional<raw_object> parse_raw_object(std::string_view input)
+{
+    if (!hax::json::validate(input, PROVIDER_JSON_OPTIONS))
+        return std::nullopt;
+    auto document = glz::lazy_json(input);
+    if (!document || !document->root().is_object())
+        return std::nullopt;
 
-    last =
-        json_array_size(details) > 0 ? json_array_get(details, json_array_size(details) - 1) : NULL;
-    if (last && is_reasoning_text(last) && is_reasoning_text(block)) {
-        const char *tail = json_string_value(json_object_get(block, "text"));
-        if (tail && *tail) {
-            const char *head = json_string_value(json_object_get(last, "text"));
-            char *joined = xasprintf("%s%s", head ? head : "", tail);
-            json_object_set_new(last, "text", json_string(joined));
-            free(joined);
-        }
-        static const char *const CLOSING[] = {"signature", "format"};
-        for (const char *key : CLOSING)
-            if (has_member(block, key) && !has_member(last, key))
-                json_object_set(last, key, json_object_get(block, key));
-    } else {
-        json_array_append_new(details, block);
-        block = NULL;
+    raw_object result;
+    for (const auto &member : document->root())
+        result.emplace_back(std::string(member.key()), raw_json{std::string(member.raw_json())});
+    return result;
+}
+
+static std::optional<raw_array> parse_raw_array(std::string_view input)
+{
+    if (!hax::json::validate(input, PROVIDER_JSON_OPTIONS))
+        return std::nullopt;
+    auto document = glz::lazy_json(input);
+    if (!document || !document->root().is_array())
+        return std::nullopt;
+
+    raw_array result;
+    for (const auto &member : document->root())
+        result.emplace_back(std::string(member.raw_json()));
+    return result;
+}
+
+static std::optional<std::string> serialize_raw_object(const raw_object &object)
+{
+    std::string encoded = "{";
+    for (size_t i = 0; i < object.size(); i++) {
+        if (i)
+            encoded += ',';
+        auto key = hax::json::serialize_escaped(object[i].first, PROVIDER_JSON_OPTIONS);
+        if (!key)
+            return std::nullopt;
+        encoded += *key;
+        encoded += ':';
+        encoded += object[i].second.str;
+    }
+    encoded += '}';
+    return encoded;
+}
+
+static std::optional<std::string> serialize_raw_array(const raw_array &array)
+{
+    std::string encoded = "[";
+    for (size_t i = 0; i < array.size(); i++) {
+        if (i)
+            encoded += ',';
+        encoded += array[i].str;
+    }
+    encoded += ']';
+    return encoded;
+}
+
+static bool is_reasoning_text(const raw_object &detail)
+{
+    const raw_json *type = raw_member(detail, "type");
+    auto decoded = type ? decode<std::string>(*type) : std::nullopt;
+    return decoded && *decoded == "reasoning.text";
+}
+
+static bool has_member(const raw_object &detail, const char *name)
+{
+    const raw_json *value = raw_member(detail, name);
+    if (!value || raw_is_null(*value))
+        return false;
+    auto text = decode<std::string>(*value);
+    return !text || !text->empty();
+}
+
+static char *append_reasoning_detail_raw(const char *current, std::string_view detail)
+{
+    auto block = parse_raw_object(detail);
+    if (!block)
+        return NULL;
+
+    raw_array details;
+    if (current) {
+        auto decoded = parse_raw_array(current);
+        if (!decoded)
+            return NULL;
+        details = std::move(*decoded);
     }
 
-    encoded = json_dumps(details, JSON_COMPACT);
+    if (!details.empty()) {
+        auto last = parse_raw_object(details.back().str);
+        if (last && is_reasoning_text(*last) && is_reasoning_text(*block)) {
+            const raw_json *tail = raw_member(*block, "text");
+            auto tail_text = tail ? decode<std::string>(*tail) : std::nullopt;
+            if (tail_text && !tail_text->empty()) {
+                const raw_json *head = raw_member(*last, "text");
+                auto head_text = head ? decode<std::string>(*head) : std::nullopt;
+                std::string joined = head_text ? *head_text : "";
+                joined += *tail_text;
+                auto encoded = hax::json::serialize_escaped(joined, PROVIDER_JSON_OPTIONS);
+                if (!encoded)
+                    return NULL;
+                if (auto *text = raw_member(*last, "text"))
+                    *text = raw_json{std::move(*encoded)};
+                else
+                    last->emplace_back("text", raw_json{std::move(*encoded)});
+            }
+            static const char *const CLOSING[] = {"signature", "format"};
+            for (const char *key : CLOSING) {
+                const raw_json *source = raw_member(*block, key);
+                if (has_member(*block, key) && !has_member(*last, key))
+                    last->emplace_back(key, *source);
+            }
+            auto merged = serialize_raw_object(*last);
+            if (!merged)
+                return NULL;
+            details.back() = raw_json{std::move(*merged)};
+        } else {
+            auto encoded = serialize_raw_object(*block);
+            if (!encoded)
+                return NULL;
+            details.emplace_back(std::move(*encoded));
+        }
+    } else {
+        auto encoded = serialize_raw_object(*block);
+        if (!encoded)
+            return NULL;
+        details.emplace_back(std::move(*encoded));
+    }
 
-out:
-    json_decref(block);
-    json_decref(details);
-    return encoded;
+    auto encoded = serialize_raw_array(details);
+    return encoded ? xstrdup(encoded->c_str()) : NULL;
 }
 
 static void append_body_reasoning(std::optional<std::vector<raw_json>> *destination,
@@ -643,32 +748,47 @@ static std::optional<std::string> rename_reasoning_field(std::string encoded,
     if (!reasoning_field || strcmp(reasoning_field, "reasoning_content") == 0)
         return encoded;
 
-    json_t *messages = json_loads(encoded.c_str(), 0, NULL);
-    if (!json_is_array(messages)) {
-        json_decref(messages);
+    auto messages = parse_raw_array(encoded);
+    if (!messages)
         return std::nullopt;
-    }
-    size_t index;
-    json_t *message;
-    json_array_foreach(messages, index, message)
-    {
-        json_t *reasoning = json_object_get(message, "reasoning_content");
-        if (reasoning) {
-            if (json_object_set(message, reasoning_field, reasoning) != 0) {
-                json_decref(messages);
-                return std::nullopt;
+
+    for (raw_json &message_json : *messages) {
+        auto message = parse_raw_object(message_json.str);
+        if (!message)
+            continue;
+        raw_json *reasoning = raw_member(*message, "reasoning_content");
+        if (!reasoning)
+            continue;
+
+        auto custom = raw_member(*message, reasoning_field);
+        if (custom) {
+            *custom = std::move(*reasoning);
+            for (auto it = message->begin(); it != message->end(); ++it) {
+                if (it->first == "reasoning_content") {
+                    message->erase(it);
+                    break;
+                }
             }
-            json_object_del(message, "reasoning_content");
+        } else {
+            raw_json moved = std::move(*reasoning);
+            for (auto it = message->begin(); it != message->end(); ++it) {
+                if (it->first == "reasoning_content") {
+                    message->erase(it);
+                    break;
+                }
+            }
+            message->emplace_back(reasoning_field, std::move(moved));
         }
+        auto rewritten = serialize_raw_object(*message);
+        if (!rewritten)
+            return std::nullopt;
+        message_json = raw_json{std::move(*rewritten)};
     }
 
-    char *result = json_dumps(messages, JSON_COMPACT);
-    json_decref(messages);
+    auto result = serialize_raw_array(*messages);
     if (!result)
         return std::nullopt;
-    std::string output(result);
-    free(result);
-    return output;
+    return result;
 }
 
 static void
@@ -847,7 +967,7 @@ std::optional<chat_chunk> parse_chat_chunk(std::string_view input)
 
 char *append_reasoning_detail(const char *current, std::string_view detail)
 {
-    return append_reasoning_detail_jansson(current, detail);
+    return append_reasoning_detail_raw(current, detail);
 }
 
 std::optional<std::string> build_chat_messages(const char *system_prompt, const ::item *items,

@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/openrouter.h"
 
-#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,22 +34,16 @@ static const char *openrouter_api_key(void)
     return provider_api_key("providers.openrouter", "OPENROUTER_API_KEY");
 }
 
-void openrouter_parse_model(const json_t *entry, struct model_info *info)
+void openrouter_parse_model(const char *entry, struct model_info *info)
 {
-    char *encoded = entry ? json_dumps(entry, JSON_COMPACT) : NULL;
-    if (encoded) {
-        hax::openai_compat_json::parse_openrouter_model(encoded, info);
-        free(encoded);
-    }
+    if (entry)
+        hax::openai_compat_json::parse_openrouter_model(entry, info);
 }
 
-void openrouter_parse_efforts(const json_t *entry, struct effort_set *efforts)
+void openrouter_parse_efforts(const char *entry, struct effort_set *efforts)
 {
-    char *encoded = entry ? json_dumps(entry, JSON_COMPACT) : NULL;
-    if (encoded) {
-        hax::openai_compat_json::parse_openrouter_efforts(encoded, efforts);
-        free(encoded);
-    }
+    if (entry)
+        hax::openai_compat_json::parse_openrouter_efforts(entry, efforts);
 }
 
 void openrouter_parse_model_probe_response(const char *body, const char *model,

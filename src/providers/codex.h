@@ -2,8 +2,6 @@
 #ifndef HAX_PROVIDERS_CODEX_H
 #define HAX_PROVIDERS_CODEX_H
 
-#include <jansson.h>
-
 #include "provider.h"
 
 /* Create a provider from ~/.codex/auth.json, or report an error and return NULL. */
@@ -21,12 +19,12 @@ void codex_provider_reload_auth(struct provider *provider);
 
 /* Read one catalog entry into an initialized model_info. Newly reported pointer fields are owned by
  * the model. */
-void codex_parse_model(const json_t *entry, struct model_info *model);
+void codex_parse_model(const char *entry, struct model_info *model);
 
-int codex_model_is_hidden(const json_t *entry);
+int codex_model_is_hidden(const char *entry);
 
 /* Read the wire-compatible reasoning levels reported by one Codex catalog entry. */
-void codex_parse_model_efforts(const json_t *entry, struct effort_set *efforts);
+void codex_parse_model_efforts(const char *entry, struct effort_set *efforts);
 
 extern const struct provider_factory PROVIDER_CODEX;
 

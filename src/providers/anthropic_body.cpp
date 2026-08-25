@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/anthropic_body.h"
 
-#include <jansson.h>
-#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <utility>
 
 #include "provider.h"
 #include "tool_schema.h"
@@ -15,74 +14,66 @@ const char *const ANTHROPIC_EFFORT_LADDER[] = {"low", "medium", "high", "xhigh",
 const size_t ANTHROPIC_EFFORT_LADDER_N =
     sizeof(ANTHROPIC_EFFORT_LADDER) / sizeof(ANTHROPIC_EFFORT_LADDER[0]);
 
-json_t *anthropic_build_messages(const struct item *items, size_t n_items,
-                                 const char *current_provider, const char *current_model,
-                                 int allow_empty_signature, int image_input)
+hax::json::value anthropic_build_messages(const struct item *items, size_t n_items,
+                                          const char *current_provider, const char *current_model,
+                                          int allow_empty_signature, int image_input)
 {
-    json_t *messages = json_array();
-    json_t *decoded = NULL;
-    json_t *result = messages;
     auto encoded = hax::anthropic_json::build_messages(
         items, n_items, current_provider, current_model, allow_empty_signature, image_input);
-    if (!encoded)
-        goto out;
-
-    decoded = json_loads(encoded->c_str(), 0, NULL);
-    if (!json_is_array(decoded))
-        goto out;
-
-    json_decref(messages);
-    result = decoded;
-    decoded = NULL;
-
-out:
-    json_decref(decoded);
-    return result;
+    auto decoded = encoded
+                       ? hax::json::parse_array(*encoded, {.source = "Anthropic Messages request",
+                                                           .max_input_bytes = 0,
+                                                           .allow_unknown_keys = true})
+                       : std::nullopt;
+    return decoded ? std::move(*decoded) : hax::json::value(hax::json::array{});
 }
 
-static json_t *build_cache_control(const char *ttl)
+static hax::json::value build_cache_control(const char *ttl)
 {
-    json_t *cache_control = json_pack("{s:s}", "type", "ephemeral");
+    hax::json::value cache_control = hax::json::object{{"type", "ephemeral"}};
     if (ttl && strcasecmp(ttl, "1h") == 0)
-        json_object_set_new(cache_control, "ttl", json_string("1h"));
+        cache_control.set("ttl", "1h");
     return cache_control;
 }
 
-static json_t *build_tools(const struct tool_def *tools, size_t n_tools, int cache_last,
-                           const char *ttl)
+static hax::json::value build_tools(const struct tool_def *tools, size_t n_tools, int cache_last,
+                                    const char *ttl)
 {
-    json_t *tool_list = json_array();
+    hax::json::array tool_list;
     for (size_t i = 0; i < n_tools; i++) {
-        json_t *schema = tool_schema_build(&tools[i]);
-        json_t *tool = json_pack("{s:s, s:s, s:o}", "name", tools[i].name, "description",
-                                 tools[i].description, "input_schema", schema);
+        hax::json::value tool = hax::json::object{
+            {"name", tools[i].name},
+            {"description", tools[i].description},
+            {"input_schema", tool_schema_value(&tools[i])},
+        };
         if (cache_last && i == n_tools - 1)
-            json_object_set_new(tool, "cache_control", build_cache_control(ttl));
-        json_array_append_new(tool_list, tool);
+            tool.set("cache_control", build_cache_control(ttl));
+        tool_list.emplace_back(std::move(tool));
     }
     return tool_list;
 }
 
-static void attach_cache_to_last_message(json_t *messages, const char *ttl)
+static void attach_cache_to_last_message(hax::json::value *messages, const char *ttl)
 {
-    size_t n_messages = json_array_size(messages);
-    if (n_messages == 0)
+    if (!messages->is_array() || messages->array_items().empty())
         return;
 
-    json_t *message = json_array_get(messages, n_messages - 1);
-    json_t *content = json_object_get(message, "content");
-    if (!json_is_array(content) || json_array_size(content) == 0)
+    hax::json::value &message = messages->array_items().back();
+    hax::json::value *content = message.find("content");
+    if (!content || !content->is_array() || content->array_items().empty())
         return;
 
-    json_t *block = json_array_get(content, json_array_size(content) - 1);
-    const char *type = json_string_value(json_object_get(block, "type"));
-    /* Anthropic rejects cache_control on thinking blocks. */
-    if (type && (strcmp(type, "thinking") == 0 || strcmp(type, "redacted_thinking") == 0))
+    hax::json::value &block = content->array_items().back();
+    if (!block.is_object())
         return;
-    json_object_set_new(block, "cache_control", build_cache_control(ttl));
+    const hax::json::value *type = block.find("type");
+    if (type && type->is_string() &&
+        (type->string_value() == "thinking" || type->string_value() == "redacted_thinking"))
+        return;
+    block.set("cache_control", build_cache_control(ttl));
 }
 
-static void apply_thinking(json_t *body, const struct context *context,
+static void apply_thinking(hax::json::value *body, const struct context *context,
                            const struct wire_body_opts *opts)
 {
     if (opts->thinking_mode == ANTHROPIC_THINKING_OFF)
@@ -90,12 +81,9 @@ static void apply_thinking(json_t *body, const struct context *context,
 
     if (opts->thinking_mode == ANTHROPIC_THINKING_ADAPTIVE) {
         const char *display = opts->show_reasoning ? "summarized" : "omitted";
-        json_object_set_new(body, "thinking",
-                            json_pack("{s:s, s:s}", "type", "adaptive", "display", display));
-        if (context->effort && *context->effort) {
-            json_object_set_new(body, "output_config",
-                                json_pack("{s:s}", "effort", context->effort));
-        }
+        body->set("thinking", hax::json::object{{"type", "adaptive"}, {"display", display}});
+        if (context->effort && *context->effort)
+            body->set("output_config", hax::json::object{{"effort", context->effort}});
         return;
     }
 
@@ -105,39 +93,36 @@ static void apply_thinking(json_t *body, const struct context *context,
     int budget_tokens = opts->thinking_budget;
     if (budget_tokens <= 0 || budget_tokens >= opts->max_tokens)
         budget_tokens = opts->max_tokens - 1;
-    json_object_set_new(body, "thinking",
-                        json_pack("{s:s, s:i}", "type", "enabled", "budget_tokens", budget_tokens));
+    body->set("thinking", hax::json::object{{"type", "enabled"}, {"budget_tokens", budget_tokens}});
 }
 
-json_t *anthropic_build_body(const struct context *context, const char *provider_id,
-                             const char *model, const struct wire_body_opts *opts)
+hax::json::value anthropic_build_body(const struct context *context, const char *provider_id,
+                                      const char *model, const struct wire_body_opts *opts)
 {
-    json_t *messages =
+    hax::json::value messages =
         anthropic_build_messages(context->items, context->n_items, provider_id, model,
                                  opts->allow_empty_signature, context->image_input);
-    json_t *body = json_pack("{s:s, s:i, s:b, s:o}", "model", model, "max_tokens", opts->max_tokens,
-                             "stream", 1, "messages", messages);
+    hax::json::value body = hax::json::object{
+        {"model", model},
+        {"max_tokens", opts->max_tokens},
+        {"stream", true},
+        {"messages", std::move(messages)},
+    };
 
     if (context->system_prompt && *context->system_prompt) {
-        json_t *system_block =
-            json_pack("{s:s, s:s}", "type", "text", "text", context->system_prompt);
-        if (opts->cache_markers) {
-            json_object_set_new(system_block, "cache_control",
-                                build_cache_control(opts->cache_ttl));
-        }
-        json_t *system = json_array();
-        json_array_append_new(system, system_block);
-        json_object_set_new(body, "system", system);
+        hax::json::value system_block =
+            hax::json::object{{"type", "text"}, {"text", context->system_prompt}};
+        if (opts->cache_markers)
+            system_block.set("cache_control", build_cache_control(opts->cache_ttl));
+        body.set("system", hax::json::array{std::move(system_block)});
     }
 
-    if (context->n_tools > 0) {
-        json_object_set_new(
-            body, "tools",
-            build_tools(context->tools, context->n_tools, opts->cache_markers, opts->cache_ttl));
-    }
+    if (context->n_tools > 0)
+        body.set("tools", build_tools(context->tools, context->n_tools, opts->cache_markers,
+                                      opts->cache_ttl));
     if (opts->cache_markers)
-        attach_cache_to_last_message(messages, opts->cache_ttl);
+        attach_cache_to_last_message(body.find("messages"), opts->cache_ttl);
 
-    apply_thinking(body, context, opts);
+    apply_thinking(&body, context, opts);
     return body;
 }

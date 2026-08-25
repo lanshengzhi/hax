@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "providers/anthropic.h"
 
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
 #include <utility>
@@ -25,16 +24,10 @@
 #define MODEL_LIST_TIMEOUT_S  10
 #define MODEL_PROBE_TIMEOUT_S 5
 
-void anthropic_parse_model(const json_t *entry, struct model_info *out)
+void anthropic_parse_model(const char *entry, struct model_info *out)
 {
-    if (!entry || !out)
-        return;
-
-    char *encoded = json_dumps(entry, JSON_COMPACT);
-    if (encoded) {
-        hax::anthropic_json::parse_model(encoded, out);
-        free(encoded);
-    }
+    if (entry && out)
+        hax::anthropic_json::parse_model(entry, out);
 }
 
 static void parse_model_probe_response(const char *response_body, const char *model,

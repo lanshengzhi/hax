@@ -316,9 +316,12 @@ int session_control_rewrite_header(std::string_view input, const char *id, const
         return -1;
 
     auto &object = decoded->get_object();
+    std::optional<std::string> forked_from;
     const auto source_id = object.find("id");
     if (source_id != object.end() && source_id->second.is_string())
-        object["forked_from"] = source_id->second.get_string();
+        forked_from = source_id->second.get_string();
+    if (forked_from)
+        object["forked_from"] = *forked_from;
     object["id"] = id;
     object["timestamp"] = timestamp;
 

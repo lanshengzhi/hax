@@ -92,14 +92,13 @@ project conventions belong in `AGENTS.md`, where they apply without being invoke
 
 ### Small dependency footprint
 
-hax links only what it genuinely needs: libcurl for HTTPS, Jansson for the existing JSON paths,
-and platform threads. Glaze is a header-only JSON dependency used behind the migration adapter and
-is available as Debian's `libglaze-dev` package and Homebrew's `glaze` formula. The build still
-fetches a pinned source archive rather than linking another runtime library, keeping the dependency
-reproducible across installed package revisions. A dependency is a permanent tax on every build,
-port, and audit, so the default answer to "just add a library"
-is no. One format serves both config and the wire because a JSON parser is linked anyway — TOML or
-YAML would mean a second parser for a marginal gain in comfort.
+hax links only what it genuinely needs: libcurl for HTTPS and platform threads. Glaze is the
+header-only JSON implementation, available as Debian's `libglaze-dev` package and Homebrew's
+`glaze` formula. The build still fetches a pinned source archive rather than linking another
+runtime library, keeping the dependency reproducible across installed package revisions. A
+dependency is a permanent tax on every build, port, and audit, so the default answer to "just add
+a library" is no. One format serves both config and the wire because a JSON parser is linked
+anyway — TOML or YAML would mean a second parser for a marginal gain in comfort.
 Terminal handling and unified-diff generation are in-tree rather than ncurses or a diff library.
 Where a separate program already does the job well, hax runs it instead of linking it — `fzf` for
 the `@` file picker, and `$EDITOR` and `$PAGER` where they fit — the same out-of-process

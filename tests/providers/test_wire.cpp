@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "harness.h"
+#include "json_helpers.h"
 #include "provider.h"
 #include "providers/anthropic_body.h"
 #include "providers/chat_body.h"
@@ -150,24 +150,21 @@ static void test_finish_applies_extra_body(void)
 {
     struct item items[] = {{.kind = ITEM_USER_MESSAGE, .text = "hello"}};
     struct context context = {.items = items, .n_items = 1, .image_input = 1};
-    json_t *extra = json_pack("{s:f}", "temperature", 0.5);
+    const char extra[] = "{\"temperature\":0.5}";
     struct wire_body_opts opts = {.extra_body = extra};
 
     char *serialized = wire_build_body(&WIRE_OPENAI_CHAT, &context, "prov", "model-1", &opts);
     EXPECT(serialized != NULL);
-    json_t *body = json_loads(serialized, 0, NULL);
+    test_json *body = test_json_parse(serialized);
     free(serialized);
     EXPECT(body != NULL);
-    if (!body) {
-        json_decref(extra);
+    if (!body)
         return;
-    }
 
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "model")), "model-1");
-    EXPECT(json_real_value(json_object_get(body, "temperature")) == 0.5);
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "model")), "model-1");
+    EXPECT(test_json_real(test_json_get(body, "temperature")) == 0.5);
 
-    json_decref(body);
-    json_decref(extra);
+    test_json_release(body);
 }
 
 int main(void)

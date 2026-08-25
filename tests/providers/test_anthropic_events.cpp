@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "harness.h"
+#include "json_helpers.h"
 #include "provider.h"
 #include "providers/anthropic_events.h"
 
@@ -151,12 +151,12 @@ static void test_thinking_block_assembles_reasoning_item(void)
 
     int index = find_event(&capture, EV_REASONING_ITEM);
     EXPECT(index >= 0);
-    json_t *object = json_loads(capture.events[index].json, 0, NULL);
+    test_json *object = test_json_parse(capture.events[index].json);
     EXPECT(object != NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(object, "type")), "thinking");
-    EXPECT_STR_EQ(json_string_value(json_object_get(object, "thinking")), "Let me think.");
-    EXPECT_STR_EQ(json_string_value(json_object_get(object, "signature")), "SIG123");
-    json_decref(object);
+    EXPECT_STR_EQ(test_json_string(test_json_get(object, "type")), "thinking");
+    EXPECT_STR_EQ(test_json_string(test_json_get(object, "thinking")), "Let me think.");
+    EXPECT_STR_EQ(test_json_string(test_json_get(object, "signature")), "SIG123");
+    test_json_release(object);
     EVENTS_FIXTURE_FREE(capture, parser);
 }
 
@@ -170,11 +170,11 @@ static void test_thinking_omitted_empty_text_still_round_trips_signature(void)
     FEED(parser, "{\"type\":\"content_block_stop\",\"index\":0}");
     int index = find_event(&capture, EV_REASONING_ITEM);
     EXPECT(index >= 0);
-    json_t *object = json_loads(capture.events[index].json, 0, NULL);
+    test_json *object = test_json_parse(capture.events[index].json);
     EXPECT(object != NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(object, "thinking")), "");
-    EXPECT_STR_EQ(json_string_value(json_object_get(object, "signature")), "OPAQUE");
-    json_decref(object);
+    EXPECT_STR_EQ(test_json_string(test_json_get(object, "thinking")), "");
+    EXPECT_STR_EQ(test_json_string(test_json_get(object, "signature")), "OPAQUE");
+    test_json_release(object);
     EVENTS_FIXTURE_FREE(capture, parser);
 }
 
@@ -186,11 +186,11 @@ static void test_redacted_thinking_round_trips_data(void)
     FEED(parser, "{\"type\":\"content_block_stop\",\"index\":0}");
     int index = find_event(&capture, EV_REASONING_ITEM);
     EXPECT(index >= 0);
-    json_t *object = json_loads(capture.events[index].json, 0, NULL);
+    test_json *object = test_json_parse(capture.events[index].json);
     EXPECT(object != NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(object, "type")), "redacted_thinking");
-    EXPECT_STR_EQ(json_string_value(json_object_get(object, "data")), "ENCRYPTED");
-    json_decref(object);
+    EXPECT_STR_EQ(test_json_string(test_json_get(object, "type")), "redacted_thinking");
+    EXPECT_STR_EQ(test_json_string(test_json_get(object, "data")), "ENCRYPTED");
+    test_json_release(object);
     EVENTS_FIXTURE_FREE(capture, parser);
 }
 

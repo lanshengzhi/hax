@@ -2,8 +2,6 @@
 #ifndef HAX_PROVIDERS_ANTHROPIC_H
 #define HAX_PROVIDERS_ANTHROPIC_H
 
-#include <jansson.h>
-
 #include "provider.h"
 #include "providers/http_provider.h"
 
@@ -15,7 +13,7 @@ struct provider *anthropic_provider_new_preset(const struct http_provider_preset
 struct provider *anthropic_provider_new(const char *id);
 
 /* `out` is initialized and already owns the entry's id. */
-void anthropic_parse_model(const json_t *entry, struct model_info *out);
+void anthropic_parse_model(const char *entry, struct model_info *out);
 
 extern const struct provider_factory PROVIDER_ANTHROPIC;
 

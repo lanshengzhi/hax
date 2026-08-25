@@ -2,9 +2,9 @@
 #ifndef HAX_PROVIDERS_CONFIG_PROVIDER_H
 #define HAX_PROVIDERS_CONFIG_PROVIDER_H
 
-#include <jansson.h>
 #include <stddef.h>
 
+#include "json_value.h"
 #include "provider.h"
 #include "providers/wire.h"
 
@@ -67,16 +67,15 @@ const char *provider_api_key(const char *config_prefix, const char *api_key_env)
  * Defaults to 1h, which suits an interactive agent's pauses better than the API's 5m. */
 const char *provider_cache_ttl(const char *config_prefix);
 
-/* Resolve <prefix>.extra_body: an owned object of raw JSON members a provider merges into each
- * request body it builds, or NULL. Protocol-owned members (model, messages, tools, ...) are
- * dropped with a warning, as is a non-object value. */
-json_t *provider_extra_body(const char *config_prefix);
+/* Resolve <prefix>.extra_body to owned compact JSON for the members a provider merges into each
+ * request body, or NULL. Protocol-owned members (model, messages, tools, ...) are dropped with a
+ * warning, as is a non-object value. */
+char *provider_extra_body(const char *config_prefix);
 
-/* Merge extra-body members into `body` (NULL `extra_body` is a no-op). A member overrides the
- * built field of the same name, recursing where both sides are objects so a nested member
- * extends rather than replaces a built block. Merged values are shared with `extra_body`, so
- * the caller must not mutate `body` afterwards. */
-void provider_extra_body_apply(json_t *body, const json_t *extra_body);
+/* Merge compact extra-body JSON into `body` (NULL `extra_body` is a no-op). A member overrides
+ * the built field of the same name, recursing where both sides are objects so a nested member
+ * extends rather than replaces a built block. */
+void provider_extra_body_apply(hax::json::value *body, const char *extra_body);
 
 /* Resolve <prefix>.extra_headers, an object of header name/value members, into an owned
  * NULL-terminated array of "Name: value" strings for every request to the provider, or NULL.

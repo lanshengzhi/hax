@@ -1,19 +1,19 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
 #include "harness.h"
+#include "json_helpers.h"
 #include "tool.h"
 #include "util.h"
 
 static char *call_write(const char *path, const char *content)
 {
-    json_t *arguments = json_pack("{s:s, s:s}", "path", path, "content", content);
-    char *args_json = json_dumps(arguments, JSON_COMPACT);
-    json_decref(arguments);
+    hax::json::value arguments = hax::json::object{{"path", path}, {"content", content}};
+    auto encoded = hax::json::serialize_value(arguments);
+    char *args_json = encoded ? xstrdup(encoded->c_str()) : NULL;
     char *result = TOOL_WRITE.run(args_json, NULL);
     free(args_json);
     return result;

@@ -2,11 +2,11 @@
 #include "providers/config_provider.h"
 
 #include <ctype.h>
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
 #include <string>
 #include <strings.h>
+#include <utility>
 
 #include "config.h"
 #include "provider.h"
@@ -138,76 +138,59 @@ static const char *const EXTRA_BODY_RESERVED[] = {
     "n",     "system", "tools",    "stream_options", "instructions",
 };
 
-/* The configured-provider request path still consumes Jansson bodies until its own adapter slice;
- * materialize the project-owned config value only at that protocol boundary. */
-static json_t *json_value_to_jansson(const hax::json::value &source)
-{
-    if (source.is_null())
-        return json_null();
-    if (source.is_boolean())
-        return source.boolean_value() ? json_true() : json_false();
-    if (source.is_integer())
-        return json_integer((json_int_t)source.integer_value());
-    if (source.is_real())
-        return json_real(source.real_value());
-    if (source.is_string())
-        return json_stringn(source.string_value().data(), source.string_value().size());
-    if (source.is_array()) {
-        json_t *result = json_array();
-        for (const hax::json::value &item : source.array_items())
-            json_array_append_new(result, json_value_to_jansson(item));
-        return result;
-    }
-
-    json_t *result = json_object();
-    for (const auto &member : source.object_items())
-        /* Jansson rejects embedded NULs in object keys; length-aware insertion avoids truncating
-         * the key and consumes the value when the key cannot be represented. */
-        json_object_setn_new(result, member.first.data(), member.first.size(),
-                             json_value_to_jansson(member.second));
-    return result;
-}
-
-json_t *provider_extra_body(const char *config_prefix)
+char *provider_extra_body(const char *config_prefix)
 {
     if (!config_prefix)
         return NULL;
     char *key = xasprintf("%s.extra_body", config_prefix);
     const hax::json::value *node = config_json_node(key);
-    json_t *extra_body = NULL;
+    char *encoded = NULL;
     if (node && node->is_object()) {
-        extra_body = json_value_to_jansson(*node);
+        hax::json::value extra = *node;
         for (size_t i = 0; i < sizeof(EXTRA_BODY_RESERVED) / sizeof(*EXTRA_BODY_RESERVED); i++) {
-            if (json_object_get(extra_body, EXTRA_BODY_RESERVED[i])) {
+            if (extra.find(EXTRA_BODY_RESERVED[i])) {
                 hax_warn("%s: '%s' is protocol-owned — ignoring it", key, EXTRA_BODY_RESERVED[i]);
-                json_object_del(extra_body, EXTRA_BODY_RESERVED[i]);
+                /* Config objects may retain duplicate keys; reserved fields must never survive. */
+                while (extra.erase(EXTRA_BODY_RESERVED[i])) {
+                }
             }
         }
+        auto serialized = hax::json::serialize_value(
+            extra, {.source = key, .max_input_bytes = 0, .allow_unknown_keys = true});
+        if (serialized)
+            encoded = xstrdup(serialized->c_str());
     } else if (node) {
         hax_warn("%s must be a JSON object — ignoring it", key);
     }
     free(key);
-    return extra_body;
+    return encoded;
 }
 
-static void merge_object_recursive(json_t *target, const json_t *extra)
+static void merge_object_recursive(hax::json::value *target, const hax::json::value &extra)
 {
-    const char *member_name;
-    json_t *member;
-    json_object_foreach((json_t *)extra, member_name, member)
-    {
-        json_t *existing = json_object_get(target, member_name);
-        if (json_is_object(existing) && json_is_object(member))
-            merge_object_recursive(existing, member);
-        else
-            json_object_set(target, member_name, member);
+    if (!target->is_object() || !extra.is_object())
+        return;
+
+    for (const auto &member : extra.object_items()) {
+        const hax::json::value *existing = target->find(member.first);
+        if (existing && existing->is_object() && member.second.is_object()) {
+            hax::json::value merged = *existing;
+            merge_object_recursive(&merged, member.second);
+            target->set(member.first, std::move(merged));
+        } else {
+            target->set(member.first, member.second);
+        }
     }
 }
 
-void provider_extra_body_apply(json_t *body, const json_t *extra_body)
+void provider_extra_body_apply(hax::json::value *body, const char *extra_body)
 {
-    if (extra_body)
-        merge_object_recursive(body, extra_body);
+    if (!body || !extra_body)
+        return;
+    auto extra =
+        hax::json::parse_value(extra_body, {.source = "provider extra_body", .max_input_bytes = 0});
+    if (extra && extra->is_object())
+        merge_object_recursive(body, *extra);
 }
 
 /* RFC 7230 field names are tokens; a separator would smuggle in a second header or make curl

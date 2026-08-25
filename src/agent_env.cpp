@@ -208,7 +208,7 @@ static int append_agents_md(struct buf *b, const char *path, const char *display
     /* AGENTS.md is user-authored and may contain embedded NULs or invalid
      * UTF-8; the path itself comes from getcwd / $HOME / $XDG_CONFIG_HOME
      * which on Linux can also carry arbitrary bytes. Both would break
-     * provider JSON (NUL truncates strlen, Jansson rejects non-UTF-8) —
+     * provider JSON (NUL truncates strlen, the parser rejects non-UTF-8) —
      * sanitize both before splicing into the prompt. */
     char *clean = utf8_sanitize(content, n);
     free(content);

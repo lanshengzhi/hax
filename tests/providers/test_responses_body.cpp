@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: MIT */
-#include <jansson.h>
 #include <string.h>
 
 #include "harness.h"
+#include "json_helpers.h"
 #include "provider.h"
 #include "providers/responses_body.h"
 #include "providers/wire.h"
 
-static const char *item_type(json_t *item)
+static const char *item_type(test_json *item)
 {
-    return json_string_value(json_object_get(item, "type"));
+    return test_json_string(test_json_get(item, "type"));
 }
 
 static void test_input_item_shapes(void)
@@ -24,30 +24,31 @@ static void test_input_item_shapes(void)
         {.kind = ITEM_TURN_BOUNDARY},
         {.kind = ITEM_TOOL_RESULT, .call_id = "c1", .output = "out"},
     };
-    json_t *input = responses_build_input_items(items, 5, "codex", "o3", -1);
-    EXPECT(json_array_size(input) == 4);
+    test_json *input = test_json_owned(responses_build_input_items(items, 5, "codex", "o3", -1));
+    EXPECT(test_json_size(input) == 4);
 
-    json_t *user_message = json_array_get(input, 0);
+    test_json *user_message = test_json_array_get(input, 0);
     EXPECT_STR_EQ(item_type(user_message), "message");
-    EXPECT_STR_EQ(json_string_value(json_object_get(user_message, "role")), "user");
-    json_t *user_content = json_array_get(json_object_get(user_message, "content"), 0);
+    EXPECT_STR_EQ(test_json_string(test_json_get(user_message, "role")), "user");
+    test_json *user_content = test_json_array_get(test_json_get(user_message, "content"), 0);
     EXPECT_STR_EQ(item_type(user_content), "input_text");
-    EXPECT_STR_EQ(json_string_value(json_object_get(user_content, "text")), "hi");
+    EXPECT_STR_EQ(test_json_string(test_json_get(user_content, "text")), "hi");
 
-    json_t *assistant_message = json_array_get(input, 1);
-    EXPECT_STR_EQ(json_string_value(json_object_get(assistant_message, "role")), "assistant");
-    json_t *assistant_content = json_array_get(json_object_get(assistant_message, "content"), 0);
+    test_json *assistant_message = test_json_array_get(input, 1);
+    EXPECT_STR_EQ(test_json_string(test_json_get(assistant_message, "role")), "assistant");
+    test_json *assistant_content =
+        test_json_array_get(test_json_get(assistant_message, "content"), 0);
     EXPECT_STR_EQ(item_type(assistant_content), "output_text");
 
-    json_t *tool_call = json_array_get(input, 2);
+    test_json *tool_call = test_json_array_get(input, 2);
     EXPECT_STR_EQ(item_type(tool_call), "function_call");
-    EXPECT_STR_EQ(json_string_value(json_object_get(tool_call, "call_id")), "c1");
+    EXPECT_STR_EQ(test_json_string(test_json_get(tool_call, "call_id")), "c1");
 
-    json_t *tool_result = json_array_get(input, 3);
+    test_json *tool_result = test_json_array_get(input, 3);
     EXPECT_STR_EQ(item_type(tool_result), "function_call_output");
-    EXPECT(json_is_string(json_object_get(tool_result, "output")));
-    EXPECT_STR_EQ(json_string_value(json_object_get(tool_result, "output")), "out");
-    json_decref(input);
+    EXPECT(test_json_is_string(test_json_get(tool_result, "output")));
+    EXPECT_STR_EQ(test_json_string(test_json_get(tool_result, "output")), "out");
+    test_json_release(input);
 }
 
 static void test_tool_result_image(void)
@@ -63,22 +64,22 @@ static void test_tool_result_image(void)
          .n_images = 1},
     };
 
-    json_t *input = responses_build_input_items(items, 1, "codex", "o3", 1);
-    json_t *output = json_object_get(json_array_get(input, 0), "output");
-    EXPECT(json_is_array(output));
-    EXPECT_STR_EQ(item_type(json_array_get(output, 0)), "input_text");
-    json_t *image = json_array_get(output, 1);
+    test_json *input = test_json_owned(responses_build_input_items(items, 1, "codex", "o3", 1));
+    test_json *output = test_json_get(test_json_array_get(input, 0), "output");
+    EXPECT(test_json_is_array(output));
+    EXPECT_STR_EQ(item_type(test_json_array_get(output, 0)), "input_text");
+    test_json *image = test_json_array_get(output, 1);
     EXPECT_STR_EQ(item_type(image), "input_image");
-    EXPECT_STR_EQ(json_string_value(json_object_get(image, "image_url")),
+    EXPECT_STR_EQ(test_json_string(test_json_get(image, "image_url")),
                   "data:image/png;base64,QUJD");
-    json_decref(input);
+    test_json_release(input);
 
-    input = responses_build_input_items(items, 1, "codex", "o3", 0);
-    output = json_object_get(json_array_get(input, 0), "output");
-    json_t *placeholder = json_array_get(output, 1);
+    input = test_json_owned(responses_build_input_items(items, 1, "codex", "o3", 0));
+    output = test_json_get(test_json_array_get(input, 0), "output");
+    test_json *placeholder = test_json_array_get(output, 1);
     EXPECT_STR_EQ(item_type(placeholder), "input_text");
-    EXPECT(strstr(json_string_value(json_object_get(placeholder, "text")), "[image:") != NULL);
-    json_decref(input);
+    EXPECT(strstr(test_json_string(test_json_get(placeholder, "text")), "[image:") != NULL);
+    test_json_release(input);
 }
 
 static void test_reasoning_provenance(void)
@@ -92,24 +93,25 @@ static void test_reasoning_provenance(void)
         {.kind = ITEM_ASSISTANT_MESSAGE, .text = "done"},
     };
 
-    json_t *input = responses_build_input_items(items, 2, "codex", "o3", -1);
-    EXPECT(json_array_size(input) == 2);
-    EXPECT_STR_EQ(item_type(json_array_get(input, 0)), "reasoning");
-    json_t *summary = json_array_get(json_object_get(json_array_get(input, 0), "summary"), 0);
-    EXPECT(json_is_object(json_object_get(summary, "future")));
-    json_decref(input);
+    test_json *input = test_json_owned(responses_build_input_items(items, 2, "codex", "o3", -1));
+    EXPECT(test_json_size(input) == 2);
+    EXPECT_STR_EQ(item_type(test_json_array_get(input, 0)), "reasoning");
+    test_json *summary =
+        test_json_array_get(test_json_get(test_json_array_get(input, 0), "summary"), 0);
+    EXPECT(test_json_is_object(test_json_get(summary, "future")));
+    test_json_release(input);
 
-    input = responses_build_input_items(items, 2, "codex", "o4", -1);
-    EXPECT(json_array_size(input) == 1);
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(input, 0), "role")),
+    input = test_json_owned(responses_build_input_items(items, 2, "codex", "o4", -1));
+    EXPECT(test_json_size(input) == 1);
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(input, 0), "role")),
                   "assistant");
-    json_decref(input);
+    test_json_release(input);
 
-    input = responses_build_input_items(items, 2, "openai", "o3", -1);
-    EXPECT(json_array_size(input) == 1);
-    EXPECT_STR_EQ(json_string_value(json_object_get(json_array_get(input, 0), "role")),
+    input = test_json_owned(responses_build_input_items(items, 2, "openai", "o3", -1));
+    EXPECT(test_json_size(input) == 1);
+    EXPECT_STR_EQ(test_json_string(test_json_get(test_json_array_get(input, 0), "role")),
                   "assistant");
-    json_decref(input);
+    test_json_release(input);
 
     struct item scalar_reasoning = {
         .kind = ITEM_REASONING,
@@ -117,15 +119,15 @@ static void test_reasoning_provenance(void)
         .provider = "codex",
         .model = "o3",
     };
-    input = responses_build_input_items(&scalar_reasoning, 1, "codex", "o3", -1);
-    EXPECT(json_array_size(input) == 0);
-    json_decref(input);
+    input = test_json_owned(responses_build_input_items(&scalar_reasoning, 1, "codex", "o3", -1));
+    EXPECT(test_json_size(input) == 0);
+    test_json_release(input);
 
     scalar_reasoning.reasoning_json = "[]";
-    input = responses_build_input_items(&scalar_reasoning, 1, "codex", "o3", -1);
-    EXPECT(json_array_size(input) == 1);
-    EXPECT(json_is_array(json_array_get(input, 0)));
-    json_decref(input);
+    input = test_json_owned(responses_build_input_items(&scalar_reasoning, 1, "codex", "o3", -1));
+    EXPECT(test_json_size(input) == 1);
+    EXPECT(test_json_is_array(test_json_array_get(input, 0)));
+    test_json_release(input);
 }
 
 static void test_body_shape(void)
@@ -142,27 +144,27 @@ static void test_body_shape(void)
         .image_input = -1,
     };
 
-    json_t *body = responses_build_body(&context, "openai", "gpt-5", NULL);
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "model")), "gpt-5");
-    EXPECT(json_object_get(body, "stream") == json_true());
-    EXPECT(json_object_get(body, "store") == json_false());
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "instructions")), "be brief");
-    EXPECT(json_array_size(json_object_get(body, "input")) == 1);
+    test_json *body = test_json_owned(responses_build_body(&context, "openai", "gpt-5", NULL));
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "model")), "gpt-5");
+    EXPECT(test_json_is_true(test_json_get(body, "stream")));
+    EXPECT(test_json_is_false(test_json_get(body, "store")));
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "instructions")), "be brief");
+    EXPECT(test_json_size(test_json_get(body, "input")) == 1);
 
     /* Responses declares function schemas flat, unlike the Chat Completions nesting. */
-    json_t *tool = json_array_get(json_object_get(body, "tools"), 0);
+    test_json *tool = test_json_array_get(test_json_get(body, "tools"), 0);
     EXPECT_STR_EQ(item_type(tool), "function");
-    EXPECT_STR_EQ(json_string_value(json_object_get(tool, "name")), "bash");
-    EXPECT(json_object_get(tool, "function") == NULL);
-    EXPECT(json_object_get(body, "parallel_tool_calls") == json_true());
+    EXPECT_STR_EQ(test_json_string(test_json_get(tool, "name")), "bash");
+    EXPECT(test_json_get(tool, "function") == NULL);
+    EXPECT(test_json_is_true(test_json_get(body, "parallel_tool_calls")));
 
-    json_t *reasoning = json_object_get(body, "reasoning");
-    EXPECT_STR_EQ(json_string_value(json_object_get(reasoning, "effort")), "medium");
-    EXPECT_STR_EQ(json_string_value(json_object_get(reasoning, "summary")), "auto");
-    EXPECT(json_object_get(body, "reasoning_effort") == NULL);
-    EXPECT_STR_EQ(json_string_value(json_array_get(json_object_get(body, "include"), 0)),
+    test_json *reasoning = test_json_get(body, "reasoning");
+    EXPECT_STR_EQ(test_json_string(test_json_get(reasoning, "effort")), "medium");
+    EXPECT_STR_EQ(test_json_string(test_json_get(reasoning, "summary")), "auto");
+    EXPECT(test_json_get(body, "reasoning_effort") == NULL);
+    EXPECT_STR_EQ(test_json_string(test_json_array_get(test_json_get(body, "include"), 0)),
                   "reasoning.encrypted_content");
-    json_decref(body);
+    test_json_release(body);
 }
 
 static void test_body_reasoning_variants(void)
@@ -171,45 +173,46 @@ static void test_body_reasoning_variants(void)
 
     /* An unset effort picks no level but still reasons, so its encrypted output must be
      * requested — otherwise a store:false turn has nothing to replay across its tool calls. */
-    json_t *body = responses_build_body(&context, "openai", "gpt-5", NULL);
-    EXPECT(json_object_get(body, "reasoning") == NULL);
-    EXPECT_STR_EQ(json_string_value(json_array_get(json_object_get(body, "include"), 0)),
+    test_json *body = test_json_owned(responses_build_body(&context, "openai", "gpt-5", NULL));
+    EXPECT(test_json_get(body, "reasoning") == NULL);
+    EXPECT_STR_EQ(test_json_string(test_json_array_get(test_json_get(body, "include"), 0)),
                   "reasoning.encrypted_content");
-    EXPECT(json_object_get(body, "tools") == NULL);
-    json_decref(body);
+    EXPECT(test_json_get(body, "tools") == NULL);
+    test_json_release(body);
 
     /* An empty effort is the same absence of a choice, not a request to disable reasoning. */
     context.effort = "";
-    body = responses_build_body(&context, "openai", "gpt-5", NULL);
-    EXPECT(json_object_get(body, "reasoning") == NULL);
-    EXPECT(json_array_size(json_object_get(body, "include")) == 1);
-    json_decref(body);
+    body = test_json_owned(responses_build_body(&context, "openai", "gpt-5", NULL));
+    EXPECT(test_json_get(body, "reasoning") == NULL);
+    EXPECT(test_json_size(test_json_get(body, "include")) == 1);
+    test_json_release(body);
 
     /* Only an explicit "none" rules reasoning out, leaving nothing to replay. */
     context.effort = "none";
-    body = responses_build_body(&context, "openai", "gpt-5", NULL);
-    json_t *reasoning = json_object_get(body, "reasoning");
-    EXPECT_STR_EQ(json_string_value(json_object_get(reasoning, "effort")), "none");
-    EXPECT(json_object_get(reasoning, "summary") == NULL);
-    EXPECT(json_object_get(body, "include") == NULL);
-    json_decref(body);
+    body = test_json_owned(responses_build_body(&context, "openai", "gpt-5", NULL));
+    test_json *reasoning = test_json_get(body, "reasoning");
+    EXPECT_STR_EQ(test_json_string(test_json_get(reasoning, "effort")), "none");
+    EXPECT(test_json_get(reasoning, "summary") == NULL);
+    EXPECT(test_json_get(body, "include") == NULL);
+    test_json_release(body);
 }
 
 static void test_control_characters_remain_json_safe(void)
 {
     char text[] = {'a', '\x01', 'b', '\0'};
     struct item items[] = {{.kind = ITEM_USER_MESSAGE, .text = text}};
-    json_t *input = responses_build_input_items(items, 1, "openai", "gpt-5", -1);
+    test_json *input =
+        test_json_owned(responses_build_input_items(items, 1, "openai", "gpt-5", -1));
 
-    EXPECT(json_array_size(input) == 1);
+    EXPECT(test_json_size(input) == 1);
     /* Responses content is always a typed array, so inspect its first text part. */
-    const char *decoded = json_string_value(json_object_get(
-        json_array_get(json_object_get(json_array_get(input, 0), "content"), 0), "text"));
+    const char *decoded = test_json_string(test_json_get(
+        test_json_array_get(test_json_get(test_json_array_get(input, 0), "content"), 0), "text"));
     EXPECT(decoded != NULL);
     if (decoded)
         EXPECT(decoded[0] == 'a' && decoded[1] == '\x01' && decoded[2] == 'b' &&
                decoded[3] == '\0');
-    json_decref(input);
+    test_json_release(input);
 }
 
 static void test_body_session_cache_key(void)
@@ -217,14 +220,14 @@ static void test_body_session_cache_key(void)
     struct context context = {.system_prompt = "sys", .image_input = -1};
 
     struct wire_body_opts opts = {.session_cache_key = "sess-2"};
-    json_t *body = responses_build_body(&context, "openai", "gpt-5", &opts);
-    EXPECT_STR_EQ(json_string_value(json_object_get(body, "prompt_cache_key")), "sess-2");
-    json_decref(body);
+    test_json *body = test_json_owned(responses_build_body(&context, "openai", "gpt-5", &opts));
+    EXPECT_STR_EQ(test_json_string(test_json_get(body, "prompt_cache_key")), "sess-2");
+    test_json_release(body);
 
     /* NULL opts serve callers that layer their own routing fields. */
-    body = responses_build_body(&context, "openai", "gpt-5", NULL);
-    EXPECT(json_object_get(body, "prompt_cache_key") == NULL);
-    json_decref(body);
+    body = test_json_owned(responses_build_body(&context, "openai", "gpt-5", NULL));
+    EXPECT(test_json_get(body, "prompt_cache_key") == NULL);
+    test_json_release(body);
 }
 
 int main(void)
