@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 #include <unistd.h>
 
 #include "agent_core.h"
@@ -802,10 +803,27 @@ static void test_new_file_write_replays_content(void)
     struct item *items =
         new_file_write("{\"path\":\"/tmp/x\",\"content\":\"WROTE_ONE\\nWROTE_TWO\\n\"}", &n);
     char *out = render(HISTORY_FULL, items, n, 0);
+    char *plain = strip_sgr(out);
+    EXPECT_STR_EQ(plain, "[write] /tmp/x\n┌ WROTE_ONE\n└ WROTE_TWO\n");
     EXPECT(strstr(out, "WROTE_ONE") != NULL);
     EXPECT(strstr(out, "WROTE_TWO") != NULL);
     /* The summary was model-facing only; the body stands in for it. */
     EXPECT(strstr(out, "created /tmp/x") == NULL);
+    free(plain);
+    free(out);
+}
+
+static void test_new_file_write_large_content_replays(void)
+{
+    std::string arguments = "{\"path\":\"/tmp/x\",\"content\":\"";
+    arguments.append((1 << 20) + 1, 'x');
+    arguments += "\",\"future\":9223372036854775808}";
+
+    size_t n;
+    struct item *items = new_file_write(arguments.c_str(), &n);
+    char *out = render(HISTORY_FULL, items, n, 0);
+    EXPECT(strstr(out, "created /tmp/x") == NULL);
+    EXPECT(strstr(out, "xxxxxxxx") != NULL);
     free(out);
 }
 
@@ -1012,6 +1030,7 @@ int main(void)
     test_unknown_tool_renders_generically();
     test_consecutive_assistant_items_join();
     test_new_file_write_replays_content();
+    test_new_file_write_large_content_replays();
     test_new_file_write_falls_back_to_summary();
     test_failed_write_shows_error_not_content();
     test_overwrite_still_replays_diff();

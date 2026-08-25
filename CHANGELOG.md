@@ -20,6 +20,10 @@ notes (see [docs/releasing.md](docs/releasing.md)).
   preserving selection, pricing, tier, and fallback behavior.
 - Keep provider credentials opaque at the credential-store boundary while preserving atomic 0600
   persistence and leaving malformed stores untouched.
+- Route trace, transcript, and history JSON through the project-owned adapter while preserving
+  redaction, opaque fragments, replay, reconstruction, and plain-output behavior; remaining
+  production Jansson boundaries are inventoried in
+  [docs/json-boundaries.md](docs/json-boundaries.md).
 - Update the llama.cpp convenience provider's default llama-server port to 9931; the
   `HAX_LLAMACPP_PORT` and `HAX_LLAMACPP_BASE_URL` overrides remain available.
 

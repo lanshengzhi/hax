@@ -205,6 +205,10 @@ static std::expected<void, error> append_value(const value &source, std::string 
         if (std::isfinite(source.real_value()) &&
             encoded->find_first_of(".eE") == std::string::npos)
             encoded->append(".0");
+        /* Keep the canonical exponent spelling used by the legacy JSON boundary. */
+        for (char &character : *encoded)
+            if (character == 'E')
+                character = 'e';
         output += *encoded;
         return {};
     }
@@ -284,6 +288,41 @@ std::expected<std::string, error> serialize_value_pretty(const value &source, op
     std::string pretty;
     glz::prettify_json<pretty_options{}>(*encoded, pretty);
     return pretty;
+}
+
+std::expected<std::string, error> pretty_json(std::string_view input, options options)
+{
+    auto valid = validate(input, options);
+    if (!valid)
+        return std::unexpected(valid.error());
+
+    struct pretty_options : glz::opts {
+        uint8_t indentation_width = 2;
+    };
+    std::string pretty;
+    glz::prettify_json<pretty_options{}>(input, pretty);
+    return pretty;
+}
+
+std::expected<std::optional<std::string>, error>
+object_string_member(std::string_view input, std::string_view key, options options)
+{
+    auto valid = validate(input, options);
+    if (!valid)
+        return std::unexpected(valid.error());
+
+    auto document = glz::lazy_json(input);
+    if (!document || !document->is_object())
+        return std::nullopt;
+
+    const auto member = document->root()[key];
+    if (!member.is_string())
+        return std::nullopt;
+
+    auto decoded = parse<std::string>(member.raw_json(), options);
+    if (!decoded)
+        return std::unexpected(decoded.error());
+    return std::optional<std::string>(std::move(*decoded));
 }
 
 std::expected<void, error> validate(std::string_view input, options options)

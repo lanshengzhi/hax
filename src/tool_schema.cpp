@@ -3,36 +3,68 @@
 
 #include <jansson.h>
 #include <stddef.h>
+#include <utility>
 
 #include "provider.h"
 
-json_t *tool_schema_build(const struct tool_def *def)
+hax::json::value tool_schema_value(const struct tool_def *def)
 {
-    json_t *properties = json_object();
-    json_t *required = json_array();
+    hax::json::object properties;
+    hax::json::array required;
 
     for (size_t i = 0; def && i < def->n_params; i++) {
         const struct tool_param *param = &def->params[i];
-        json_t *prop = json_object();
+        hax::json::object property;
 
         if (param->type)
-            json_object_set_new(prop, "type", json_string(param->type));
+            property.emplace_back("type", param->type);
         if (param->item_type)
-            json_object_set_new(prop, "items", json_pack("{s:s}", "type", param->item_type));
+            property.emplace_back("items", hax::json::object{{"type", param->item_type}});
         if (param->description)
-            json_object_set_new(prop, "description", json_string(param->description));
+            property.emplace_back("description", param->description);
         if (param->minimum)
-            json_object_set_new(prop, "minimum", json_integer(param->minimum));
-        json_object_set_new(properties, param->name, prop);
+            property.emplace_back("minimum", param->minimum);
+        properties.emplace_back(param->name, hax::json::value(std::move(property)));
 
         if (param->required)
-            json_array_append_new(required, json_string(param->name));
+            required.emplace_back(param->name);
     }
 
-    json_t *schema = json_pack("{s:s, s:o}", "type", "object", "properties", properties);
-    if (json_array_size(required) > 0)
-        json_object_set_new(schema, "required", required);
-    else
-        json_decref(required);
+    hax::json::object schema;
+    schema.emplace_back("type", "object");
+    schema.emplace_back("properties", hax::json::value(std::move(properties)));
+    if (!required.empty())
+        schema.emplace_back("required", hax::json::value(std::move(required)));
     return schema;
+}
+
+static json_t *to_jansson(const hax::json::value &source)
+{
+    if (source.is_null())
+        return json_null();
+    if (source.is_boolean())
+        return source.boolean_value() ? json_true() : json_false();
+    if (source.is_integer())
+        return json_integer(source.integer_value());
+    if (source.is_real())
+        return json_real(source.real_value());
+    if (source.is_string())
+        return json_string(source.string_value().c_str());
+    if (source.is_array()) {
+        json_t *result = json_array();
+        for (const hax::json::value &item : source.array_items())
+            json_array_append_new(result, to_jansson(item));
+        return result;
+    }
+
+    json_t *result = json_object();
+    for (const auto &member : source.object_items())
+        json_object_setn_new(result, member.first.data(), member.first.size(),
+                             to_jansson(member.second));
+    return result;
+}
+
+json_t *tool_schema_build(const struct tool_def *def)
+{
+    return to_jansson(tool_schema_value(def));
 }

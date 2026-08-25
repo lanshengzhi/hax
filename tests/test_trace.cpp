@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 #include <unistd.h>
 
 #include "config.h"
@@ -12,7 +13,7 @@
  * (Authorization, x-api-key, api-key) are redacted by case-insensitive name, and a value
  * registered via trace_register_secret — every $VAR-resolved header value and API key — is
  * redacted under any header name. Other headers pass through verbatim. */
-static void test_credential_headers_redacted(void)
+static void test_trace_redaction_and_payload_formatting(void)
 {
     /* Worker-side trace calls are inert until the foreground initializes the
      * destination; they never lazily resolve config themselves. */
@@ -99,11 +100,38 @@ static void test_credential_headers_redacted(void)
         EXPECT(strstr(contents, "\"token\": \"<redacted>\"") != NULL);
         free(contents);
     }
+
+    /* Malformed payloads remain readable as text instead of disappearing behind the JSON path. */
+    trace_sse_event("malformed", "{\"broken\":");
+
+    /* Diagnostic payloads are not subject to the adapter's normal input bound. */
+    std::string large_body = "{\"payload\":\"";
+    large_body.append((1 << 20) + 1, 'x');
+    large_body += "\"}";
+    trace_sse_event("large", large_body.c_str());
+    trace_sse_event("large-number", "{\"future\":9223372036854775808}");
+
+    contents = slurp_file(path, &len);
+    EXPECT(contents != NULL);
+    if (contents) {
+        const char *malformed = strstr(contents, "### event: malformed");
+        EXPECT(malformed != NULL && strstr(malformed, "```text\n{\"broken\":") != NULL);
+        const char *large = strstr(contents, "### event: large  (");
+        EXPECT(large != NULL && strstr(large, "```json\n") != NULL);
+        const char *large_number = strstr(contents, "### event: large-number");
+        EXPECT(large_number != NULL && strstr(large_number, "9223372036854775808") != NULL);
+        const char *large_number_body = large_number ? strstr(large_number, "\n\n```json\n") : NULL;
+        EXPECT(large_number_body != NULL);
+        if (large_number_body)
+            EXPECT_STR_EQ(large_number_body,
+                          "\n\n```json\n{\n  \"future\": 9223372036854775808\n}\n```\n");
+        free(contents);
+    }
     unlink(path);
 }
 
 int main(void)
 {
-    test_credential_headers_redacted();
+    test_trace_redaction_and_payload_formatting();
     T_REPORT();
 }

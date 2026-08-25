@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -237,6 +238,15 @@ std::expected<std::string, error> serialize_value(const value &source, options o
 
 /* Serialize a project-owned dynamic value using two-space indentation. */
 std::expected<std::string, error> serialize_value_pretty(const value &source, options options = {});
+
+/* Pretty-print one complete JSON document without changing its raw number or string fragments.
+ * This path accepts valid values that do not fit the dynamic value's signed integer model. */
+std::expected<std::string, error> pretty_json(std::string_view input, options options = {});
+
+/* Return an optional string member from one complete JSON object. Unknown members remain raw, so
+ * unrelated opaque values do not need to fit a typed or signed-integer representation. */
+std::expected<std::optional<std::string>, error>
+object_string_member(std::string_view input, std::string_view key, options options = {});
 
 } // namespace hax::json
 

@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: MIT */
 #include "trace.h"
 
-#include <jansson.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string_view>
 #include <strings.h>
 
 #include "config.h"
+#include "json.h"
 #include "util.h"
 
 static pthread_mutex_t trace_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -122,21 +123,33 @@ static void emit_fenced(FILE *fp, const char *lang, const char *content, size_t 
 }
 
 /* Falls back to a raw ```text fence when JSON parsing fails, so the trace stays useful when
- * the server sends garbage. */
+ * the server sends garbage. Traces bypass the normal JSON input bound. */
 static void emit_json_or_text(FILE *fp, const char *json, size_t len)
 {
-    json_error_t err;
-    json_t *root = json_loadb(json, len, 0, &err);
+    const std::string_view input(json, len);
+    const hax::json::options json_options = {.source = "trace payload", .max_input_bytes = 0};
+    auto root = hax::json::parse_value(input, json_options);
     if (!root) {
+        auto pretty = hax::json::pretty_json(input, json_options);
+        if (pretty) {
+            emit_fenced(fp, "json", pretty->data(), pretty->size());
+            return;
+        }
         emit_fenced(fp, "text", json, len);
         return;
     }
-    char *pretty = json_dumps(root, JSON_INDENT(2) | JSON_PRESERVE_ORDER);
+
+    auto pretty = hax::json::serialize_value_pretty(*root, json_options);
     if (pretty) {
-        emit_fenced(fp, "json", pretty, strlen(pretty));
-        free(pretty);
+        emit_fenced(fp, "json", pretty->data(), pretty->size());
+        return;
     }
-    json_decref(root);
+
+    auto raw_pretty = hax::json::pretty_json(input, json_options);
+    if (raw_pretty)
+        emit_fenced(fp, "json", raw_pretty->data(), raw_pretty->size());
+    else
+        emit_fenced(fp, "text", json, len);
 }
 
 /* Registered credential values, guarded by trace_mu; deliberately never freed. */

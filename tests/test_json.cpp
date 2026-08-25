@@ -73,6 +73,15 @@ static void test_dynamic_value_preserves_integers_and_order(void)
             EXPECT(*real_encoded == "1000.0");
     }
 
+    const auto small_real = hax::json::parse_value("1e-6");
+    EXPECT(small_real.has_value() && small_real->is_real());
+    if (small_real) {
+        const auto small_encoded = hax::json::serialize_value(*small_real);
+        EXPECT(small_encoded.has_value());
+        if (small_encoded)
+            EXPECT(*small_encoded == "1e-6");
+    }
+
     hax::json::value duplicate = hax::json::object{{"key", 1}, {"key", 2}};
     const hax::json::value *duplicate_last = duplicate.find("key");
     EXPECT(duplicate_last && duplicate_last->is_integer() && duplicate_last->integer_value() == 2);
@@ -93,6 +102,21 @@ static void test_dynamic_integer_overflow_is_rejected(void)
     EXPECT(!hax::json::parse_value("-9223372036854775809"));
     EXPECT(hax::json::parse_value("9223372036854775808.0"));
     EXPECT(hax::json::parse_value(R"("9223372036854775808")"));
+}
+
+static void test_opaque_json_paths_tolerate_large_members(void)
+{
+    const std::string input = R"({"content":"replay me","future":9223372036854775808})";
+    const auto pretty = hax::json::pretty_json(input, {.max_input_bytes = 0});
+    EXPECT(pretty.has_value());
+    if (pretty)
+        EXPECT(pretty->find("9223372036854775808") != std::string::npos);
+
+    const auto content = hax::json::object_string_member(
+        input, "content", {.source = "opaque test", .max_input_bytes = 0});
+    EXPECT(content.has_value() && content->has_value());
+    if (content && content->has_value())
+        EXPECT(content->value() == "replay me");
 }
 
 static void test_syntax_error_has_source_context(void)
@@ -205,6 +229,7 @@ int main(void) // NOLINT(bugprone-exception-escape)
     test_valid_parse_and_serialize();
     test_dynamic_value_preserves_integers_and_order();
     test_dynamic_integer_overflow_is_rejected();
+    test_opaque_json_paths_tolerate_large_members();
     test_syntax_error_has_source_context();
     test_type_error_is_project_error();
     test_unknown_keys_are_explicitly_permissive();

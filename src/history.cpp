@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 #include "history.h"
 
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string_view>
 
 #include "agent_core.h"
 #include "agent_dispatch.h"
 #include "agent_tool.h"
+#include "json.h"
 #include "provider.h"
 #include "tool.h"
 #include "util.h"
@@ -101,18 +102,17 @@ static char *summarized_preview_body(const struct item *call, const struct item 
     if (!call->tool_name || strcmp(call->tool_name, "write") != 0 || !call->tool_arguments_json)
         return NULL;
 
-    json_t *root = json_loads(call->tool_arguments_json, 0, NULL);
-    if (!root)
+    auto content =
+        hax::json::object_string_member(std::string_view(call->tool_arguments_json), "content",
+                                        {.source = "history tool arguments", .max_input_bytes = 0});
+    if (!content || !content->has_value())
         return NULL;
-    json_t *content = json_object_get(root, "content");
-    char *body = NULL;
-    if (json_is_string(content)) {
-        *body_len = json_string_length(content);
-        body = (char *)xmalloc(*body_len + 1);
-        memcpy(body, json_string_value(content), *body_len);
-        body[*body_len] = '\0';
-    }
-    json_decref(root);
+
+    const std::string &text = content->value();
+    *body_len = text.size();
+    char *body = (char *)xmalloc(*body_len + 1);
+    memcpy(body, text.data(), *body_len);
+    body[*body_len] = '\0';
     return body;
 }
 

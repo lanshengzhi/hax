@@ -1,12 +1,16 @@
 /* SPDX-License-Identifier: MIT */
 #include "transcript.h"
 
-#include <jansson.h>
+#include <optional>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
+#include <string_view>
+#include <utility>
 
 #include "config.h"
+#include "json.h"
 #include "provider.h"
 #include "tool_schema.h"
 #include "util.h"
@@ -163,22 +167,34 @@ static void render_assistant(const struct transcript_renderer *renderer, const s
     ensure_newline(out, item->text);
 }
 
-static void render_json_or_text(FILE *out, const char *text)
+static std::optional<std::string> pretty_json(std::string_view text)
 {
-    json_t *root = json_loads(text, 0, NULL);
-    char *pretty = root ? json_dumps(root, JSON_INDENT(2) | JSON_PRESERVE_ORDER) : NULL;
-
-    if (pretty) {
-        fputs(pretty, out);
-        ensure_newline(out, pretty);
-    } else {
-        fputs(text, out);
-        ensure_newline(out, text);
+    const hax::json::options json_options = {.source = "transcript payload", .max_input_bytes = 0};
+    auto root = hax::json::parse_value(text, json_options);
+    if (!root) {
+        auto raw_pretty = hax::json::pretty_json(text, json_options);
+        return raw_pretty ? std::optional<std::string>(std::move(*raw_pretty)) : std::nullopt;
     }
 
-    free(pretty);
-    if (root)
-        json_decref(root);
+    auto pretty = hax::json::serialize_value_pretty(*root, json_options);
+    if (pretty)
+        return std::move(*pretty);
+
+    auto raw_pretty = hax::json::pretty_json(text, json_options);
+    return raw_pretty ? std::optional<std::string>(std::move(*raw_pretty)) : std::nullopt;
+}
+
+static void render_json_or_text(FILE *out, const char *text)
+{
+    const char *input = text ? text : "";
+    auto pretty = pretty_json(input);
+    if (pretty) {
+        fputs(pretty->c_str(), out);
+        ensure_newline(out, pretty->c_str());
+    } else {
+        fputs(input, out);
+        ensure_newline(out, input);
+    }
 }
 
 static void render_tool_call(const struct transcript_renderer *renderer, const struct item *item)
@@ -193,15 +209,13 @@ static void render_tool_call(const struct transcript_renderer *renderer, const s
 
 static void render_tool_schema(FILE *out, const struct tool_def *tool)
 {
-    json_t *schema = tool_schema_build(tool);
-    char *pretty = json_dumps(schema, JSON_INDENT(2));
-    json_decref(schema);
+    auto pretty = hax::json::serialize_value_pretty(
+        tool_schema_value(tool), {.source = "transcript tool schema", .max_input_bytes = 0});
     if (!pretty)
         return;
     fputc('\n', out);
-    fputs(pretty, out);
-    ensure_newline(out, pretty);
-    free(pretty);
+    fputs(pretty->c_str(), out);
+    ensure_newline(out, pretty->c_str());
 }
 
 static void render_tools(const struct transcript_renderer *renderer, const struct tool_def *tools,
@@ -351,13 +365,11 @@ static void render_reasoning(const struct transcript_renderer *renderer, const s
 
     fprintf(out, "%s[reasoning]%s", ansi(renderer, ANSI_DIM), ansi(renderer, ANSI_RESET));
     if (item->reasoning_json) {
-        json_t *reasoning = json_loads(item->reasoning_json, 0, NULL);
-        if (reasoning) {
-            const char *id = json_string_value(json_object_get(reasoning, "id"));
-            if (id)
-                fprintf(out, " %s%s%s", ansi(renderer, ANSI_DIM), id, ansi(renderer, ANSI_RESET));
-            json_decref(reasoning);
-        }
+        auto id = hax::json::object_string_member(
+            item->reasoning_json, "id", {.source = "transcript reasoning", .max_input_bytes = 0});
+        if (id && id->has_value())
+            fprintf(out, " %s%s%s", ansi(renderer, ANSI_DIM), id->value().c_str(),
+                    ansi(renderer, ANSI_RESET));
     }
     fputc('\n', out);
 }

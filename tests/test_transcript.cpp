@@ -248,12 +248,10 @@ static void test_tool_call_pretty_prints_args_without_id(void)
         .tool_name = (char *)"read",
         .tool_arguments_json = (char *)"{\"path\":\"foo.c\"}",
     }};
-    char *out = render_to_string(NULL, items, 1);
-    EXPECT(contains(out, "[read]"));
-
-    EXPECT(!contains(out, "call_42"));
-
-    EXPECT(contains(out, "\n  \"path\": \"foo.c\""));
+    int turn_number = 0;
+    char *out = render_item_range(TRANSCRIPT_RENDER_PLAIN, items, 1, 0, &turn_number);
+    EXPECT_STR_EQ(out, "[read]\n{\n  \"path\": \"foo.c\"\n}\n\n");
+    EXPECT(strstr(out, "call_42") == NULL);
     free(out);
 }
 
@@ -384,9 +382,15 @@ static void test_orphan_read_result_stays_plain(void)
 static void test_plain_mode_file_tool_results_have_no_escapes(void)
 {
     struct item items[] = {
-        {.kind = ITEM_TOOL_CALL, .call_id = (char *)"c1", .tool_name = (char *)"read"},
+        {.kind = ITEM_TOOL_CALL,
+         .call_id = (char *)"c1",
+         .tool_name = (char *)"read",
+         .tool_arguments_json = (char *)"{\"path\":\"plain.c\"}"},
         {.kind = ITEM_TOOL_RESULT, .call_id = (char *)"c1", .output = (char *)"     1→foo\n"},
-        {.kind = ITEM_TOOL_CALL, .call_id = (char *)"c2", .tool_name = (char *)"edit"},
+        {.kind = ITEM_TOOL_CALL,
+         .call_id = (char *)"c2",
+         .tool_name = (char *)"edit",
+         .tool_arguments_json = (char *)"{\"path\":\"plain.c\"}"},
         {.kind = ITEM_TOOL_RESULT,
          .call_id = (char *)"c2",
          .output = (char *)"--- a/f.c\n+++ b/f.c\n@@ -1 +1 @@\n-old\n+new\n"},
@@ -395,6 +399,7 @@ static void test_plain_mode_file_tool_results_have_no_escapes(void)
     char *output = render_item_range(TRANSCRIPT_RENDER_PLAIN, items, 4, 0, &turn_number);
     EXPECT(contains(output, "     1→foo"));
     EXPECT(contains(output, "-old\n+new"));
+    EXPECT(contains(output, "\n  \"path\": \"plain.c\""));
     EXPECT(!contains(output, "\x1b["));
     free(output);
 }
@@ -659,7 +664,8 @@ static void test_opaque_reasoning_shows_id_without_payload(void)
 {
     struct item items[] = {{
         .kind = ITEM_REASONING,
-        .reasoning_json = (char *)"{\"id\":\"rs_abc\",\"encrypted_content\":\"xxxx\"}",
+        .reasoning_json = (char *)"{\"id\":\"rs_abc\",\"encrypted_content\":\"xxxx\","
+                                  "\"future\":9223372036854775808}",
     }};
     char *out = render_to_string(NULL, items, 1);
     EXPECT(contains(out, "[reasoning]"));
