@@ -8,6 +8,7 @@
 #include "provider.h"
 #include "util.h"
 #include "providers/config_provider.h"
+#include "providers/config_provider_json.h"
 #include "providers/opencode.h"
 #include "providers/registry.h"
 
@@ -47,6 +48,42 @@ static void expect_registry_projects_provider_fields(void)
             }
         }
     }
+}
+
+static void test_model_page_json_adapter(void)
+{
+    auto page = hax::config_provider_json::parse_model_page(
+        "{\"data\":[{\"id\":\"m\",\"future\":{\"opaque\":true}},{\"id\":7},7],"
+        "\"future\":true}");
+    EXPECT(page.has_value());
+    if (!page)
+        return;
+
+    EXPECT(page->data_kind == hax::config_provider_json::model_page_data_kind::array);
+    EXPECT(page->entries.size() == 3);
+    EXPECT(page->entries[0].id.has_value());
+    if (page->entries[0].id)
+        EXPECT_STR_EQ(page->entries[0].id.value_or("").c_str(), "m");
+    EXPECT(!page->entries[1].id);
+    EXPECT(!page->entries[2].id);
+    EXPECT(strstr(page->entries[0].json.c_str(), "opaque") != NULL);
+
+    auto null_data = hax::config_provider_json::parse_model_page("{\"data\":null}");
+    EXPECT(null_data &&
+           null_data->data_kind == hax::config_provider_json::model_page_data_kind::null_value);
+
+    auto empty_data = hax::config_provider_json::parse_model_page("{\"data\":[]}");
+    EXPECT(empty_data &&
+           empty_data->data_kind == hax::config_provider_json::model_page_data_kind::array &&
+           empty_data->entries.empty());
+
+    auto unsupported = hax::config_provider_json::parse_model_page("{\"data\":{}}");
+    EXPECT(unsupported &&
+           unsupported->data_kind == hax::config_provider_json::model_page_data_kind::unsupported);
+
+    EXPECT(!hax::config_provider_json::parse_model_page("not json"));
+    EXPECT(!hax::config_provider_json::parse_model_page("[]"));
+    EXPECT(!hax::config_provider_json::parse_model_page("null"));
 }
 
 static void test_cache_ttl_resolution(void)
@@ -561,6 +598,7 @@ int main(void)
     unsetenv("HAX_OPENAI_BASE_URL");
 
     expect_registry_projects_provider_fields();
+    test_model_page_json_adapter();
     test_cache_ttl_resolution();
     test_extra_body();
     test_extra_headers();

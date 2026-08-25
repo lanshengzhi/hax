@@ -226,6 +226,44 @@ error:
     return -1;
 }
 
+static void test_configured_model_list(void)
+{
+    static const char RESPONSE[] =
+        "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n"
+        "{\"data\":[{\"id\":\"model-a\",\"future\":{\"opaque\":true}},{\"id\":7},{}]}";
+    struct wire_server server = {.response = RESPONSE, .n_requests = 1};
+    pthread_t thread;
+    int port = start_server(&server, &thread);
+    if (port < 0)
+        T_SKIP("cannot run a loopback server here");
+
+    char base_url[64];
+    snprintf(base_url, sizeof(base_url), "http://127.0.0.1:%d/v1", port);
+    struct http_provider_preset preset = {
+        .display_name = "configured",
+        .default_base_url = base_url,
+    };
+    struct provider *provider = http_provider_new_preset(&preset);
+    EXPECT(provider != NULL);
+    if (provider) {
+        struct model_info *models = NULL;
+        size_t n_models = 0;
+        char *error = NULL;
+        EXPECT(provider->list_models(provider, &models, &n_models, &error, NULL, NULL) == 0);
+        EXPECT(n_models == 1);
+        if (n_models == 1)
+            EXPECT_STR_EQ(models[0].id, "model-a");
+        EXPECT(error == NULL);
+        model_info_free(models, n_models);
+        provider->destroy(provider);
+    }
+
+    pthread_join(thread, NULL);
+    close(server.listener_fd);
+    EXPECT(atomic_load(&server.served) == 1);
+    EXPECT(strncmp(server.requests[0], "GET /v1/models HTTP", 19) == 0);
+}
+
 struct error_log {
     int n_errors;
     char message[256];
@@ -453,6 +491,7 @@ int main(void)
 {
     signal(SIGPIPE, SIG_IGN);
     test_list_efforts_wiring();
+    test_configured_model_list();
     test_messages_efforts_follow_thinking_mode();
     test_api_override_stays_in_family();
     test_model_wire_routing();

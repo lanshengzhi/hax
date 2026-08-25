@@ -4,6 +4,7 @@
 #include <fnmatch.h>
 #include <jansson.h>
 #include <limits.h>
+#include <optional>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -15,6 +16,7 @@
 #include "providers/anthropic_body.h"
 #include "providers/chat_body.h"
 #include "providers/config_provider.h"
+#include "providers/config_provider_json.h"
 #include "providers/stream_retry.h"
 #include "providers/wire.h"
 #include "transport/api_error.h"
@@ -389,9 +391,8 @@ static int http_provider_list_models(struct provider *base, struct model_info **
     char *url = xasprintf("%s/models", provider->base_url);
     char **headers = build_headers(provider, provider->wire, 0);
     char *response_body = NULL;
-    json_t *root = NULL;
+    std::optional<hax::config_provider_json::parsed_model_page> page;
     struct model_info *available = NULL;
-    json_t *data = NULL;
     size_t n_available = 0;
     size_t n_entries = 0;
     const char *provider_name = base->name ? base->name : "provider";
@@ -408,35 +409,39 @@ static int http_provider_list_models(struct provider *base, struct model_info **
         goto out;
     }
 
-    root = json_loads(response_body, 0, NULL);
-    if (!root) {
+    page = hax::config_provider_json::parse_model_page(response_body ? response_body : "");
+    if (!page) {
         *error = xasprintf("%s /models response is not valid JSON", provider_name);
         goto out;
     }
 
-    data = json_object_get(root, "data");
     /* Ollama reports data:null when the server is reachable but has no models. */
-    if (json_is_null(data) || (json_is_array(data) && json_array_size(data) == 0)) {
+    if (page->data_kind == hax::config_provider_json::model_page_data_kind::null_value ||
+        (page->data_kind == hax::config_provider_json::model_page_data_kind::array &&
+         page->entries.empty())) {
         result = 0;
         goto out;
     }
-    if (!json_is_array(data)) {
+    if (page->data_kind != hax::config_provider_json::model_page_data_kind::array) {
         *error = xasprintf("%s /models response has no model list", provider_name);
         goto out;
     }
 
-    n_entries = json_array_size(data);
+    n_entries = page->entries.size();
     available = (struct model_info *)xmalloc(n_entries * sizeof(*available));
-    for (size_t i = 0; i < n_entries; i++) {
-        json_t *entry = json_array_get(data, i);
-        const char *model_id = json_string_value(json_object_get(entry, "id"));
-        if (!model_id || !*model_id)
+    for (const hax::config_provider_json::parsed_model_entry &entry : page->entries) {
+        if (!entry.id || entry.id->empty())
             continue;
 
         model_info_init(&available[n_available]);
-        available[n_available].id = xstrdup(model_id);
-        if (provider->parse_model)
-            provider->parse_model(entry, &available[n_available]);
+        available[n_available].id = xstrdup(entry.id->c_str());
+        if (provider->parse_model) {
+            json_t *decoded_entry = json_loads(entry.json.c_str(), 0, NULL);
+            if (decoded_entry) {
+                provider->parse_model(decoded_entry, &available[n_available]);
+                json_decref(decoded_entry);
+            }
+        }
         n_available++;
     }
 
@@ -452,7 +457,6 @@ static int http_provider_list_models(struct provider *base, struct model_info **
 
 out:
     model_info_free(available, n_available);
-    json_decref(root);
     free(response_body);
     string_array_free(headers);
     free(url);
