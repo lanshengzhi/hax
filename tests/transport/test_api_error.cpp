@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 
 #include "harness.h"
 #include "text/utf8.h"
@@ -88,6 +89,27 @@ static void test_transport_error_no_status(void)
 {
     char *message = format_api_error(0, "libcurl: Couldn't connect to server");
     EXPECT_STR_EQ(message, "libcurl: Couldn't connect to server");
+    free(message);
+}
+
+static void test_invalid_utf8_json_falls_back(void)
+{
+    const char body[] = "{\"error\":{\"message\":\"upstream \xff\"}}";
+    char *message = format_api_error(502, body);
+    EXPECT(strstr(message, "HTTP 502: ") != NULL);
+    EXPECT(strstr(message, "upstream") != NULL);
+    free(message);
+}
+
+static void test_oversized_json_falls_back_safely(void)
+{
+    std::string body = "{\"error\":{\"message\":\"";
+    body.append((1 << 20) + 1, 'A');
+    body += "\"}}";
+
+    char *message = format_api_error(500, body.c_str());
+    EXPECT(strstr(message, "HTTP 500: {\"error\"") != NULL);
+    EXPECT(strstr(message, "...") != NULL);
     free(message);
 }
 
@@ -342,6 +364,8 @@ int main(void)
     test_short_html_like_bodies();
     test_long_message_truncated();
     test_transport_error_no_status();
+    test_invalid_utf8_json_falls_back();
+    test_oversized_json_falls_back_safely();
     test_html_only_no_text();
     test_multiline_collapsed();
     test_model_list_error_key_rejected();

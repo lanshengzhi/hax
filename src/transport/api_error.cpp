@@ -2,10 +2,11 @@
 #include "transport/api_error.h"
 
 #include <ctype.h>
-#include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 
+#include "json.h"
 #include "util.h"
 #include "transport/sse.h"
 
@@ -96,19 +97,19 @@ static char *truncate_utf8(const char *message, size_t max_bytes)
 }
 
 /* The returned pointer is borrowed from `root`. */
-static const char *extract_json_message(json_t *root)
+static const std::string *extract_json_message(const hax::json::value &root)
 {
-    json_t *error = json_object_get(root, "error");
-    if (json_is_object(error)) {
-        json_t *message = json_object_get(error, "message");
-        if (json_is_string(message))
-            return json_string_value(message);
-    } else if (json_is_string(error)) {
-        return json_string_value(error);
+    const hax::json::value *error = root.find("error");
+    if (error && error->is_object()) {
+        const hax::json::value *message = error->find("message");
+        if (message && message->is_string())
+            return &message->string_value();
+    } else if (error && error->is_string()) {
+        return &error->string_value();
     }
 
-    json_t *message = json_object_get(root, "message");
-    return json_is_string(message) ? json_string_value(message) : NULL;
+    const hax::json::value *message = root.find("message");
+    return message && message->is_string() ? &message->string_value() : nullptr;
 }
 
 struct sse_error_capture {
@@ -124,11 +125,9 @@ static int capture_sse_error(const char *event_name, const char *data, void *use
 
     int is_error = event_name && strcmp(event_name, "error") == 0;
     if (!is_error) {
-        json_t *root = json_loads(data, 0, NULL);
-        if (root) {
-            is_error = extract_json_message(root) != NULL;
-            json_decref(root);
-        }
+        auto root = hax::json::parse_value(data, {.source = "SSE error response"});
+        if (root)
+            is_error = extract_json_message(*root) != nullptr;
     }
     if (is_error) {
         capture->error = xstrdup(data);
@@ -174,18 +173,16 @@ char *format_api_error(long status, const char *body)
     char *sse_data = unwrap_sse_data(body);
     const char *content = sse_data ? sse_data : body;
 
-    json_t *root = json_loads(content, 0, NULL);
+    auto root = hax::json::parse_value(content, {.source = "API error response"});
     if (root) {
-        const char *message = extract_json_message(root);
-        if (message && *message) {
-            char *truncated = truncate_utf8(message, MAX_MESSAGE_BYTES);
+        const std::string *message = extract_json_message(*root);
+        if (message && !message->empty()) {
+            char *truncated = truncate_utf8(message->c_str(), MAX_MESSAGE_BYTES);
             char *formatted = format_status_message(status, truncated);
             free(truncated);
-            json_decref(root);
             free(sse_data);
             return formatted;
         }
-        json_decref(root);
     }
 
     char *flattened = strip_html_and_flatten(content);

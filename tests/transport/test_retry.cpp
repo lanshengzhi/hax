@@ -60,6 +60,12 @@ static void test_terminal_429_errors(void)
     EXPECT(retry_should_attempt(-1, 503, codex_usage) == 1);
 }
 
+static void test_invalid_utf8_429_body_retries(void)
+{
+    const char body[] = "{\"error\":{\"type\":\"usage_limit_reached\",\"message\":\"bad \xff\"}}";
+    EXPECT(retry_should_attempt(-1, 429, body) == 1);
+}
+
 static void test_backoff_growth(void)
 {
     struct retry_policy policy = {.max_attempts = 5, .base_delay_ms = 100, .max_delay_ms = 10000};
@@ -176,6 +182,7 @@ int main(void)
 {
     test_response_classification();
     test_terminal_429_errors();
+    test_invalid_utf8_429_body_retries();
     test_backoff_growth();
     test_backoff_cap();
     test_default_policy_config();

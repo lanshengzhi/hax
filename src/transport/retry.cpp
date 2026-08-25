@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: MIT */
 #include "transport/retry.h"
 
-#include <jansson.h>
 #include <limits.h>
 #include <strings.h>
 #include <time.h>
 
 #include "config.h"
+#include "json.h"
 #include "util.h"
 #include "transport/http.h"
 
@@ -50,22 +50,20 @@ static int has_terminal_429_error(const char *body)
     if (!body || !*body)
         return 0;
 
-    json_t *root = json_loads(body, 0, NULL);
-    if (!root)
+    auto root = hax::json::parse_value(body, {.source = "retry response"});
+    if (!root || !root->is_object())
         return 0;
 
-    int terminal = 0;
-    json_t *error = json_object_get(root, "error");
-    if (json_is_object(error)) {
-        json_t *type = json_object_get(error, "type");
-        terminal = json_is_string(type) && is_terminal_429_code(json_string_value(type));
-        if (!terminal) {
-            json_t *code = json_object_get(error, "code");
-            terminal = json_is_string(code) && is_terminal_429_code(json_string_value(code));
-        }
-    }
-    json_decref(root);
-    return terminal;
+    const hax::json::value *error = root->find("error");
+    if (!error || !error->is_object())
+        return 0;
+
+    const hax::json::value *type = error->find("type");
+    if (type && type->is_string() && is_terminal_429_code(type->string_value().c_str()))
+        return 1;
+
+    const hax::json::value *code = error->find("code");
+    return code && code->is_string() && is_terminal_429_code(code->string_value().c_str());
 }
 
 int retry_should_attempt(int result, long status, const char *body)
