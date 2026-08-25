@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+#include <limits.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -271,6 +272,9 @@ static void test_max_tokens_uses_model_limit(void)
 
     EXPECT(http_provider_max_tokens(provider, "unknown-model") == 200000);
     unsetenv("HAX_ANTHROPIC_MAX_TOKENS");
+
+    store_output_cap(provider, "large-model", 2147483648L);
+    EXPECT(http_provider_max_tokens(provider, "large-model") == INT_MAX);
     provider->destroy(provider);
 }
 

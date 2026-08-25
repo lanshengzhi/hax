@@ -2,7 +2,8 @@
 #ifndef HAX_CATALOG_H
 #define HAX_CATALOG_H
 
-#include <jansson.h>
+#include <optional>
+#include <string>
 
 #include "effort.h"
 
@@ -80,9 +81,9 @@ int catalog_lookup(const char *provider_id, const char *model, struct catalog_en
 void catalog_lookup_many(const char *provider_id, const char *const *models, size_t model_count,
                          struct catalog_entry *out, int *found);
 
-/* Parse the top-level member named `key` without tree-parsing the full JSON object. Returns a new
- * reference, or NULL when the member is absent or malformed. The caller must call json_decref. */
-json_t *catalog_extract_member(const char *text, const char *key);
+/* Extract the top-level member named `key` without tree-parsing the full JSON object. The returned
+ * JSON value is owned by the caller; a missing or malformed member returns an empty optional. */
+std::optional<std::string> catalog_extract_member(const char *text, const char *key);
 
 /* Return whether cache writes replace the input charge. A known write rate below the input rate is
  * treated as a storage surcharge; unknown rates use the more common replacement policy. */

@@ -8,5 +8,10 @@
 .DS_Store
 __pycache__/
 
+# Meson wrap downloads and extracted subprojects
+/subprojects/glaze-8.1.0/
+/subprojects/packagecache/
+/subprojects/.wraplock
+
 # clang static-analyzer output
 *.plist

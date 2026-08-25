@@ -11,8 +11,8 @@
 #include "providers/opencode.h"
 #include "providers/registry.h"
 
-/* The env-alias rows registered in config.c for the shipped -compatible blocks must project
- * the provider field inventory: same leaves, same dialect, same secrecy. */
+/* The env-alias rows registered in the configuration registry for the shipped -compatible blocks
+ * must project the provider field inventory: same leaves, same dialect, same secrecy. */
 static void expect_registry_projects_provider_fields(void)
 {
     static const struct {
@@ -64,8 +64,8 @@ static void test_cache_ttl_resolution(void)
     config_set_override("providers.ttltest.cache_ttl", NULL);
 }
 
-/* extra_body survives config-load scalar normalization with its JSON types intact, drops
- * protocol-owned members with one warning each, and merges over a built body recursively. */
+/* extra_body preserves structured JSON types from config, drops protocol-owned members with one
+ * warning each, and merges over a built body recursively. */
 static void test_extra_body(void)
 {
     unsigned long diagnostics_before = hax_diag_sequence();
@@ -83,6 +83,14 @@ static void test_extra_body(void)
     EXPECT(json_is_real(json_object_get(extra, "temperature")));
     EXPECT(json_real_value(json_object_get(extra, "temperature")) == 0.25);
     EXPECT(json_is_integer(json_object_get(extra, "top_logprobs")));
+    json_t *embedded = json_object_get(extra, "embedded");
+    EXPECT(embedded && json_string_length(embedded) == 3);
+    if (embedded)
+        EXPECT(json_string_value(embedded)[0] == 'a' && json_string_value(embedded)[1] == '\0' &&
+               json_string_value(embedded)[2] == 'b');
+    /* Jansson cannot represent an embedded-NUL key, but materialization must not truncate it to
+     * the visible prefix. */
+    EXPECT(json_object_get(extra, "a") == NULL);
     json_t *routing = json_object_get(extra, "provider");
     EXPECT(json_is_false(json_object_get(routing, "allow_fallbacks")));
     EXPECT(json_is_array(json_object_get(routing, "order")));
@@ -100,7 +108,7 @@ static void test_extra_body(void)
     json_decref(body);
     json_decref(extra);
 
-    /* The flat-dotted spelling is exempt from normalization too. */
+    /* The flat-dotted spelling is also read as a structured value. */
     json_t *flat = provider_extra_body("providers.flatprov");
     EXPECT(flat != NULL);
     if (flat) {
@@ -108,8 +116,8 @@ static void test_extra_body(void)
         json_decref(flat);
     }
 
-    /* Raw types are a property of the structured read: the same numeric scalar read as a
-     * string setting coerces like any other value. */
+    /* Structured reads preserve raw types; the same numeric scalar read as a string setting
+     * coerces like any other value. */
     EXPECT_STR_EQ(config_str("extra_body.stray"), "5");
 
     /* A non-object value warns and resolves to nothing; absence stays silent. */
@@ -123,8 +131,8 @@ static void test_extra_body(void)
 
 /* extra_headers become "Name: value" strings; a "$NAME" value reads the environment. A
  * non-token name (space, separator), a non-string value, an unset variable, an empty value
- * (curl would suppress the header instead of sending it empty), and a control character
- * (literal, DEL, or smuggled through a variable) each warn and drop. */
+ * (curl would suppress the header instead of sending it empty), an embedded NUL, and a control
+ * character (literal, DEL, or smuggled through a variable) each warn and drop. */
 static void test_extra_headers(void)
 {
     setenv("HAX_TEST_HEADER", "from-env", 1);
@@ -133,7 +141,7 @@ static void test_extra_headers(void)
 
     unsigned long diagnostics_before = hax_diag_sequence();
     char **headers = provider_extra_headers("providers.extras");
-    EXPECT(hax_diag_sequence() == diagnostics_before + 9);
+    EXPECT(hax_diag_sequence() == diagnostics_before + 10);
     EXPECT(headers != NULL);
     if (!headers)
         return;
@@ -192,8 +200,8 @@ static int selectable(const char *name)
 }
 
 /* The config under test: custom providers in the nested object form, one in the flat-dotted
- * form config.c also accepts ("flatprov") to prove a flat-defined provider is enumerable and
- * not just readable, an override of the shipped ollama recipe, and the extra_body /
+ * form the configuration loader also accepts ("flatprov") to prove a flat-defined provider is
+ * enumerable and not just readable, an override of the shipped ollama recipe, and the extra_body /
  * extra_headers fixtures the tests above read. */
 static const char CONFIG_JSON[] =
     "{"
@@ -204,6 +212,8 @@ static const char CONFIG_JSON[] =
     "      \"extra_body\": {"
     "        \"temperature\": 0.25,"
     "        \"top_logprobs\": 3,"
+    "        \"embedded\": \"a\\u0000b\","
+    "        \"a\\u0000b\": \"unrepresentable key\","
     "        \"model\": \"reserved\","
     "        \"n\": 2,"
     "        \"system\": \"reserved\","
@@ -216,6 +226,7 @@ static const char CONFIG_JSON[] =
     "        \"X-Dollar\": \"$$plain\","
     "        \"X-Unset\": \"$HAX_TEST_UNSET_HEADER\","
     "        \"X-Evil\": \"$HAX_TEST_EVIL_HEADER\","
+    "        \"X-Nul\": \"a\\u0000b\","
     "        \"X-Num\": 7,"
     "        \"Bad Name\": \"x\","
     "        \"X@Host\": \"x\","

@@ -16,6 +16,8 @@ notes (see [docs/releasing.md](docs/releasing.md)).
   it only through the project-owned JSON adapter while preserving Jansson for existing paths.
 - Persist durable session items through typed Glaze records while retaining the existing session
   format and canonical conversation item model.
+- Route configuration and model-catalog metadata through the project-owned JSON adapter while
+  preserving selection, pricing, tier, and fallback behavior.
 
 
 ## [0.4.0] - 2026-08-22

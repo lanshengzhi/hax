@@ -8,47 +8,14 @@
 #include <string_view>
 #include <utility>
 
+#include "json_value.h"
+
 /* This is the only project header that includes Glaze. Domain and provider interfaces use the
  * project-owned types below and do not depend on Glaze's representation. */
 #include <glaze/json.hpp>
 
 namespace hax::json
 {
-
-enum class error_code {
-    none,
-    syntax,
-    type,
-    schema,
-    invalid_utf8,
-    trailing_data,
-    input_too_large,
-    serialization,
-};
-
-/* Options for one adapter operation. `source` is borrowed and copied into failures. A zero
- * `max_input_bytes` disables the bound; the default protects untrusted input. */
-struct options {
-    std::string_view source = "<json>";
-    size_t max_input_bytes = 1 << 20;
-    bool allow_unknown_keys = false; /* Preserve extension fields when the wire contract permits. */
-};
-
-/* An owning, provider-independent JSON failure. `source` and `message` remain valid after the
- * input buffer and any Glaze context have gone away. */
-struct error {
-    error_code code = error_code::none; /* Stable project category; none denotes success. */
-    size_t offset = 0;                  /* Byte offset reported by the adapter. */
-    std::string source;                 /* Source label copied from options. */
-    std::string message;                /* Actionable parser or serializer diagnostic. */
-};
-
-/* Return the stable human-readable name for a project error category. */
-std::string_view error_code_name(error_code code) noexcept;
-
-/* Format an owning error with its source label, byte offset, and parser or serializer
- * diagnostic. */
-std::string format_error(const error &value);
 
 /* Validate one complete JSON document. The input is borrowed for the duration of the call; failures
  * own their source label and diagnostic. */

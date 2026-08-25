@@ -55,6 +55,15 @@ long model_meta_context(const struct provider *provider, const char *model);
 /* Maximum output tokens per response, or 0 when unknown. */
 long model_meta_max_output(const struct provider *provider, const char *model);
 
+/* Resolve the catalog's wire dialect for one model. Returns NULL when no catalog hint exists;
+ * the bounded catalog wait is included so callers do not read the catalog directly. */
+const char *model_meta_api(const struct provider *provider, const char *model);
+
+/* Resolve whether the catalog explicitly declares an interleaved reasoning field. Returns 1 for a
+ * declaration, including an explicit disable or unsupported field, and stores its canonical field
+ * or NULL in `*field` when `field` is non-NULL. */
+int model_meta_interleaved(const struct provider *provider, const char *model, const char **field);
+
 /* Resolve pricing fields and tiers into initialized `out`. Returns 1 when both input and output
  * rates are known. Other catalog fields remain unknown. */
 int model_meta_rates(const struct provider *provider, const char *model, struct catalog_entry *out);

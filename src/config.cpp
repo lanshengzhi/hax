@@ -3,20 +3,138 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <jansson.h>
 #include <libgen.h>
+#include <memory>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include <utility>
 #include <sys/stat.h>
 
+#include "json.h"
 #include "provider.h"
 #include "util.h"
 #include "system/fs.h"
 #include "system/path.h"
 #include "text/utf8_sanitize.h"
+
+/* Configuration keeps a private pointer-owned tree so its existing tier ownership and borrowed
+ * lookup contracts stay local while parsing and serialization cross the project JSON adapter. */
+using config_value = hax::json::value;
+
+static config_value *config_value_alloc()
+{
+    return static_cast<config_value *>(xmalloc(sizeof(config_value)));
+}
+
+static config_value *config_value_object()
+{
+    return std::construct_at(config_value_alloc(), hax::json::object{});
+}
+
+static config_value *config_value_string(const char *text)
+{
+    return std::construct_at(config_value_alloc(), text ? text : "");
+}
+
+static config_value *config_value_copy(const config_value *source)
+{
+    return source ? std::construct_at(config_value_alloc(), *source) : NULL;
+}
+
+static void config_value_free(config_value *value)
+{
+    if (value) {
+        std::destroy_at(value);
+        free(value);
+    }
+}
+
+static config_value *config_value_parse(const char *text)
+{
+    auto decoded = hax::json::parse_value(text ? text : "", {.max_input_bytes = 0});
+    return decoded ? std::construct_at(config_value_alloc(), std::move(*decoded)) : NULL;
+}
+
+static int config_value_is_object(const config_value *value)
+{
+    return value && value->is_object();
+}
+
+static int config_value_is_string(const config_value *value)
+{
+    return value && value->is_string();
+}
+
+static int config_value_is_number(const config_value *value)
+{
+    return value && value->is_number();
+}
+
+static int config_value_is_integer(const config_value *value)
+{
+    return value && value->is_integer();
+}
+
+static int config_value_is_real(const config_value *value)
+{
+    return value && value->is_real();
+}
+
+static int config_value_is_boolean(const config_value *value)
+{
+    return value && value->is_boolean();
+}
+
+static int config_value_is_true(const config_value *value)
+{
+    return value && value->is_boolean() && value->boolean_value();
+}
+
+static const char *config_value_string_text(const config_value *value)
+{
+    return config_value_is_string(value) ? value->string_value().c_str() : NULL;
+}
+
+static long long config_value_integer(const config_value *value)
+{
+    return config_value_is_integer(value) ? static_cast<long long>(value->integer_value()) : 0;
+}
+
+static double config_value_real(const config_value *value)
+{
+    return config_value_is_real(value) ? value->real_value() : 0;
+}
+
+static config_value *config_value_member(config_value *object, const char *key)
+{
+    return object && key ? object->find(key) : NULL;
+}
+
+static int config_value_set(config_value *object, const char *key, config_value *member)
+{
+    if (!object || !key || !member)
+        return -1;
+    object->set(key, std::move(*member));
+    config_value_free(member);
+    return 0;
+}
+
+static int config_value_set_copy(config_value *object, const char *key, const config_value *member)
+{
+    if (!object || !key || !member)
+        return -1;
+    object->set(key, *member);
+    return 0;
+}
+
+static void config_value_erase(config_value *object, const char *key)
+{
+    if (object && key)
+        object->erase(key);
+}
 
 /* Canonical keys, env bindings, defaults, and /config metadata. Row order is
  * user-visible. Runtime settings must be read live or refreshed after edits;
@@ -268,15 +386,15 @@ const struct config_setting *config_setting_find(const char *key)
 
 /* A string view of a numeric or boolean scalar, materialized on first string read. */
 struct scalar_string {
-    const json_t *node;
+    const config_value *node;
     char *text;
 };
 
 struct config_store {
-    json_t *file;
-    json_t *state;
-    json_t *conversation;
-    json_t *run;
+    config_value *file;
+    config_value *state;
+    config_value *conversation;
+    config_value *run;
     /* Prevent writes from replacing config.json content that was never loaded. */
     int file_unusable;
     /* Tiers are kept verbatim, so string reads coerce numbers and booleans here on first use:
@@ -309,11 +427,11 @@ static void scalar_cache_clear(void)
 
 /* Read a JSON value as a string setting, coercing a number or boolean; other types are
  * not string-readable and return NULL. */
-static const char *scalar_as_string(const json_t *value)
+static const char *scalar_as_string(const config_value *value)
 {
-    if (!value || json_is_string(value))
-        return json_string_value(value);
-    if (!json_is_number(value) && !json_is_boolean(value))
+    if (!value || config_value_is_string(value))
+        return config_value_string_text(value);
+    if (!config_value_is_number(value) && !config_value_is_boolean(value))
         return NULL;
 
     for (size_t i = 0; i < store.n_scalar_strings; i++) {
@@ -322,12 +440,12 @@ static const char *scalar_as_string(const json_t *value)
     }
 
     char buffer[32];
-    if (json_is_integer(value))
-        snprintf(buffer, sizeof buffer, "%lld", (long long)json_integer_value(value));
-    else if (json_is_real(value))
-        snprintf(buffer, sizeof buffer, "%g", json_real_value(value));
+    if (config_value_is_integer(value))
+        snprintf(buffer, sizeof buffer, "%lld", (long long)config_value_integer(value));
+    else if (config_value_is_real(value))
+        snprintf(buffer, sizeof buffer, "%g", config_value_real(value));
     else
-        snprintf(buffer, sizeof buffer, "%s", json_is_true(value) ? "1" : "0");
+        snprintf(buffer, sizeof buffer, "%s", config_value_is_true(value) ? "1" : "0");
 
     if (store.n_scalar_strings == store.scalar_strings_capacity) {
         store.scalar_strings_capacity =
@@ -341,10 +459,10 @@ static const char *scalar_as_string(const json_t *value)
     return entry->text;
 }
 
-static int load_tier(json_t **tier, const char *text)
+static int load_tier(config_value **tier, const char *text)
 {
     scalar_cache_clear();
-    json_decref(*tier);
+    config_value_free(*tier);
     *tier = NULL;
 
     while (text && isspace((unsigned char)*text))
@@ -352,9 +470,9 @@ static int load_tier(json_t **tier, const char *text)
     if (!text || !*text)
         return 0;
 
-    json_t *root = json_loads(text, 0, NULL);
-    if (!json_is_object(root)) {
-        json_decref(root);
+    config_value *root = config_value_parse(text);
+    if (!config_value_is_object(root)) {
+        config_value_free(root);
         return -1;
     }
 
@@ -374,7 +492,7 @@ int config_load_state(const char *text)
 }
 
 /* `path` is consumed. Missing files are valid empty tiers. */
-static int load_tier_file(json_t **tier, char *path, const char *label)
+static int load_tier_file(config_value **tier, char *path, const char *label)
 {
     if (!path)
         return 0;
@@ -415,33 +533,33 @@ void config_free(void)
 {
     store.file_unusable = 0;
     scalar_cache_clear();
-    json_decref(store.file);
+    config_value_free(store.file);
     store.file = NULL;
-    json_decref(store.state);
+    config_value_free(store.state);
     store.state = NULL;
     config_clear_conversation();
-    json_decref(store.run);
+    config_value_free(store.run);
     store.run = NULL;
     free_reported_presets();
     store.preset_warnings_emitted = 0;
 }
 
 /* Flat dotted keys take precedence over their nested spelling. */
-static json_t *object_get_dotted(json_t *root, const char *key)
+static config_value *object_get_dotted(config_value *root, const char *key)
 {
     if (!root)
         return NULL;
 
-    json_t *value = json_object_get(root, key);
+    config_value *value = config_value_member(root, key);
     if (value)
         return value;
 
-    json_t *object = root;
+    config_value *object = root;
     const char *segment = key;
     for (;;) {
         const char *dot = strchr(segment, '.');
         if (!dot)
-            return json_object_get(object, segment);
+            return config_value_member(object, segment);
 
         char segment_name[64];
         size_t segment_length = (size_t)(dot - segment);
@@ -450,14 +568,14 @@ static json_t *object_get_dotted(json_t *root, const char *key)
         memcpy(segment_name, segment, segment_length);
         segment_name[segment_length] = '\0';
 
-        object = json_object_get(object, segment_name);
-        if (!json_is_object(object))
+        object = config_value_member(object, segment_name);
+        if (!config_value_is_object(object))
             return NULL;
         segment = dot + 1;
     }
 }
 
-static const char *object_get_string(json_t *root, const char *key)
+static const char *object_get_string(config_value *root, const char *key)
 {
     return scalar_as_string(object_get_dotted(root, key));
 }
@@ -482,23 +600,21 @@ static void add_object_key(char ***keys, size_t *count, size_t *capacity, const 
 }
 
 /* Include both nested members and immediate children represented by flat dotted keys. */
-static void collect_object_keys(json_t *tier, const char *key, char ***keys, size_t *count,
+static void collect_object_keys(config_value *tier, const char *key, char ***keys, size_t *count,
                                 size_t *capacity)
 {
-    if (!json_is_object(tier))
+    if (!config_value_is_object(tier))
         return;
 
-    const char *member_name;
-    json_t *member_value;
-    json_t *object = object_get_dotted(tier, key);
-    if (json_is_object(object)) {
-        json_object_foreach(object, member_name, member_value)
-            add_object_key(keys, count, capacity, member_name, strlen(member_name));
+    config_value *object = object_get_dotted(tier, key);
+    if (config_value_is_object(object)) {
+        for (auto &member : object->object_items())
+            add_object_key(keys, count, capacity, member.first.c_str(), member.first.size());
     }
 
     size_t prefix_length = strlen(key);
-    json_object_foreach(tier, member_name, member_value)
-    {
+    for (auto &member : tier->object_items()) {
+        const char *member_name = member.first.c_str();
         if (strncmp(member_name, key, prefix_length) != 0 || member_name[prefix_length] != '.')
             continue;
 
@@ -519,7 +635,7 @@ static int provider_id_equals(const char *left, const char *right)
 }
 
 /* A model or effort stored beside a provider applies only while that provider is active. */
-static int provider_binding_allows(json_t *tier, const char *key)
+static int provider_binding_allows(config_value *tier, const char *key)
 {
     if (strcmp(key, "model") != 0 && strcmp(key, "effort") != 0)
         return 1;
@@ -624,9 +740,9 @@ const char *config_default(const char *key)
     return setting ? setting->default_value : NULL;
 }
 
-const json_t *config_json_node(const char *key)
+const config_value *config_json_node(const char *key)
 {
-    json_t *node = object_get_dotted(store.state, key);
+    config_value *node = object_get_dotted(store.state, key);
     return node ? node : object_get_dotted(store.file, key);
 }
 
@@ -729,13 +845,19 @@ int config_scoped_int(const char *prefix, const char *leaf)
 
 char *config_prompt_expand(const char *value, char **error)
 {
+    char *path = NULL;
+    char *content = NULL;
+    char *clean = NULL;
+    size_t len = 0;
+    size_t n = 0;
+    int truncated = 0;
+
     if (error)
         *error = NULL;
     if (value[0] != '@')
         return xstrdup(value);
 
     const char *spec = value + 1;
-    char *path;
     if (spec[0] == '~')
         path = path_expand_home(spec);
     else if (spec[0] == '/')
@@ -745,33 +867,30 @@ char *config_prompt_expand(const char *value, char **error)
     if (!path) {
         if (error)
             *error = xasprintf("couldn't resolve prompt file '%s'", spec);
-        return NULL;
+        goto out;
     }
 
-    size_t len = 0;
-    int truncated = 0;
-    char *content = slurp_file_capped(path, PROMPT_FILE_CAP, &len, &truncated);
+    content = slurp_file_capped(path, PROMPT_FILE_CAP, &len, &truncated);
     if (!content) {
         if (error)
             *error = xasprintf("couldn't read prompt file %s", path);
-        free(path);
-        return NULL;
+        goto out;
     }
     if (truncated) {
         if (error)
             *error = xasprintf("prompt file %s exceeds %u bytes", path, PROMPT_FILE_CAP);
-        free(content);
-        free(path);
-        return NULL;
+        goto out;
     }
-    free(path);
 
     /* Provider JSON requires NUL-free, valid UTF-8. */
-    char *clean = utf8_sanitize(content, len);
-    free(content);
-    size_t n = strlen(clean);
+    clean = utf8_sanitize(content, len);
+    n = strlen(clean);
     while (n > 0 && (clean[n - 1] == '\n' || clean[n - 1] == '\r'))
         clean[--n] = '\0';
+
+out:
+    free(content);
+    free(path);
     return clean;
 }
 
@@ -923,14 +1042,14 @@ long config_duration_ms(const char *key)
     return value < 0 ? 0 : value;
 }
 
-static void set_tier_value(json_t **tier, const char *key, const char *value)
+static void set_tier_value(config_value **tier, const char *key, const char *value)
 {
     if (!*tier)
-        *tier = json_object();
+        *tier = config_value_object();
     if (value)
-        json_object_set_new(*tier, key, json_string(value));
+        config_value_set(*tier, key, config_value_string(value));
     else
-        json_object_del(*tier, key);
+        config_value_erase(*tier, key);
 }
 
 void config_set_override(const char *key, const char *value)
@@ -953,7 +1072,7 @@ static void set_writable_tier(enum config_tier tier, const char *key, const char
 
 void config_clear_conversation(void)
 {
-    json_decref(store.conversation);
+    config_value_free(store.conversation);
     store.conversation = NULL;
 }
 
@@ -1007,15 +1126,15 @@ int config_restore_selection(enum config_tier tier, const char *provider, const 
 }
 
 struct config_snapshot {
-    json_t *run;
-    json_t *conversation;
+    config_value *run;
+    config_value *conversation;
 };
 
 struct config_snapshot *config_snapshot_take(void)
 {
     struct config_snapshot *snapshot = (struct config_snapshot *)xmalloc(sizeof(*snapshot));
-    snapshot->run = store.run ? json_deep_copy(store.run) : NULL;
-    snapshot->conversation = store.conversation ? json_deep_copy(store.conversation) : NULL;
+    snapshot->run = store.run ? config_value_copy(store.run) : NULL;
+    snapshot->conversation = store.conversation ? config_value_copy(store.conversation) : NULL;
     return snapshot;
 }
 
@@ -1024,9 +1143,9 @@ void config_snapshot_restore(struct config_snapshot *snapshot)
     if (!snapshot)
         return;
 
-    json_decref(store.run);
+    config_value_free(store.run);
     store.run = snapshot->run;
-    json_decref(store.conversation);
+    config_value_free(store.conversation);
     store.conversation = snapshot->conversation;
     free(snapshot);
 }
@@ -1035,23 +1154,23 @@ void config_snapshot_free(struct config_snapshot *snapshot)
 {
     if (!snapshot)
         return;
-    json_decref(snapshot->run);
-    json_decref(snapshot->conversation);
+    config_value_free(snapshot->run);
+    config_value_free(snapshot->conversation);
     free(snapshot);
 }
 
-static void set_nested(json_t *root, const char *key, const char *value)
+static void set_nested(config_value *root, const char *key, const char *value)
 {
-    json_t *object = root;
+    config_value *object = root;
     const char *segment = key;
 
     for (;;) {
         const char *dot = strchr(segment, '.');
         if (!dot) {
             if (value)
-                json_object_set_new(object, segment, json_string(value));
+                config_value_set(object, segment, config_value_string(value));
             else
-                json_object_del(object, segment);
+                config_value_erase(object, segment);
             return;
         }
 
@@ -1062,18 +1181,23 @@ static void set_nested(json_t *root, const char *key, const char *value)
         memcpy(segment_name, segment, segment_length);
         segment_name[segment_length] = '\0';
 
-        json_t *child = json_object_get(object, segment_name);
-        if (!json_is_object(child)) {
-            child = json_object();
-            json_object_set_new(object, segment_name, child);
+        config_value *child = config_value_member(object, segment_name);
+        if (!config_value_is_object(child)) {
+            child = config_value_object();
+            config_value_set(object, segment_name, child);
+            child = config_value_member(object, segment_name);
         }
         object = child;
         segment = dot + 1;
     }
 }
 
-static int write_json_atomic(const char *path, json_t *object)
+static int write_json_atomic(const char *path, const config_value *object)
 {
+    auto encoded = hax::json::serialize_value_pretty(*object, {.source = "config"});
+    if (!encoded)
+        return -1;
+
     int result = -1;
     int fd = -1;
     FILE *file = NULL;
@@ -1102,7 +1226,7 @@ static int write_json_atomic(const char *path, json_t *object)
         goto out;
     fd = -1;
 
-    if (json_dumpf(object, file, JSON_INDENT(2) | JSON_PRESERVE_ORDER) != 0)
+    if (fwrite(encoded->data(), 1, encoded->size(), file) != encoded->size())
         goto out;
     if (fclose(file) != 0) {
         file = NULL;
@@ -1127,30 +1251,30 @@ out:
 }
 
 /* `path` is consumed. Commit the in-memory copy only after the disk write succeeds. */
-static int persist_tier(json_t **tier, char *path, const char *key, const char *value)
+static int persist_tier(config_value **tier, char *path, const char *key, const char *value)
 {
     if (!path)
         return -1;
 
-    json_t *updated = *tier ? json_deep_copy(*tier) : json_object();
+    config_value *updated = *tier ? config_value_copy(*tier) : config_value_object();
     if (!updated) {
         free(path);
         return -1;
     }
 
     /* A flat dotted key would otherwise shadow the nested value written below. */
-    json_object_del(updated, key);
+    config_value_erase(updated, key);
     set_nested(updated, key, value);
 
     int result = write_json_atomic(path, updated);
     free(path);
     if (result != 0) {
-        json_decref(updated);
+        config_value_free(updated);
         return -1;
     }
 
     scalar_cache_clear();
-    json_decref(*tier);
+    config_value_free(*tier);
     *tier = updated;
     return 0;
 }
@@ -1174,7 +1298,7 @@ int config_persist_selection(const char *provider, const char *model, const char
     char *path = xdg_hax_state_path("state.json");
     if (!path)
         return -1;
-    json_t *updated = store.state ? json_deep_copy(store.state) : json_object();
+    config_value *updated = store.state ? config_value_copy(store.state) : config_value_object();
     if (!updated) {
         free(path);
         return -1;
@@ -1184,42 +1308,45 @@ int config_persist_selection(const char *provider, const char *model, const char
     int provider_changed = !previous_provider || !provider_id_equals(previous_provider, provider);
 
     /* A selection replaces the preset stance that would otherwise reapply on launch. */
-    json_object_del(updated, "preset");
-    json_object_set_new(updated, "provider", json_string(provider));
+    config_value_erase(updated, "preset");
+    config_value_set(updated, "provider", config_value_string(provider));
     if (model || provider_changed)
-        json_object_set_new(updated, "model", json_string(model ? model : CONFIG_VALUE_DEFAULT));
+        config_value_set(updated, "model",
+                         config_value_string(model ? model : CONFIG_VALUE_DEFAULT));
     if (effort || provider_changed)
-        json_object_set_new(updated, "effort", json_string(effort ? effort : CONFIG_VALUE_DEFAULT));
+        config_value_set(updated, "effort",
+                         config_value_string(effort ? effort : CONFIG_VALUE_DEFAULT));
 
     int result = write_json_atomic(path, updated);
     free(path);
     if (result != 0) {
-        json_decref(updated);
+        config_value_free(updated);
         return -1;
     }
 
     scalar_cache_clear();
-    json_decref(store.state);
+    config_value_free(store.state);
     store.state = updated;
     return 0;
 }
 
 /* Preset names are literal object members, so dots in a name do not become path separators. */
-static const json_t *preset_node(const char *name)
+static const config_value *preset_node(const char *name)
 {
-    json_t *const tiers[] = {store.state, store.file};
+    config_value *const tiers[] = {store.state, store.file};
     for (size_t i = 0; i < sizeof(tiers) / sizeof(*tiers); i++) {
-        json_t *presets = object_get_dotted(tiers[i], "presets");
-        json_t *preset = json_is_object(presets) ? json_object_get(presets, name) : NULL;
-        if (json_is_object(preset))
+        config_value *presets = object_get_dotted(tiers[i], "presets");
+        config_value *preset =
+            config_value_is_object(presets) ? config_value_member(presets, name) : NULL;
+        if (config_value_is_object(preset))
             return preset;
     }
 
     /* Preserve the one-level flat form: {"presets.<name>": {...}}. */
     char *key = xasprintf("presets.%s", name);
-    const json_t *preset = config_json_node(key);
+    const config_value *preset = config_json_node(key);
     free(key);
-    return json_is_object(preset) ? preset : NULL;
+    return config_value_is_object(preset) ? preset : NULL;
 }
 
 /* Construction- and startup-bound settings cannot be honored by a mid-session preset. Tint is
@@ -1239,19 +1366,17 @@ static int preset_key_allowed(const char *key)
     return 0;
 }
 
-static const char *preset_member_string(const json_t *preset, const char *member)
+static const char *preset_member_string(const config_value *preset, const char *member)
 {
-    return scalar_as_string(json_object_get((json_t *)preset, member));
+    return scalar_as_string(config_value_member((config_value *)preset, member));
 }
 
 /* Apply and enumeration share validation so every advertised preset is appliable. */
-static int preset_validate(const json_t *preset, const char *name, char **error)
+static int preset_validate(const config_value *preset, const char *name, char **error)
 {
-    const char *member_name;
-    json_t *member;
-
-    json_object_foreach((json_t *)preset, member_name, member)
-    {
+    for (const auto &member : preset->object_items()) {
+        const char *member_name = member.first.c_str();
+        const config_value *member_value = &member.second;
         if (!preset_key_allowed(member_name)) {
             if (error)
                 *error = xasprintf(
@@ -1261,7 +1386,7 @@ static int preset_validate(const json_t *preset, const char *name, char **error)
                     name, member_name);
             return -1;
         }
-        if (!scalar_as_string(member)) {
+        if (!scalar_as_string(member_value)) {
             if (error)
                 *error = xasprintf("preset '%s': '%s' must be a scalar", name, member_name);
             return -1;
@@ -1338,7 +1463,7 @@ int config_preset_apply(const char *name, enum config_tier tier, char **error)
     if (error)
         *error = NULL;
 
-    const json_t *preset = preset_node(name);
+    const config_value *preset = preset_node(name);
     if (!preset) {
         if (error)
             *error = xasprintf("unknown preset '%s' (define a presets.%s block in config.json)",
@@ -1369,7 +1494,7 @@ int config_preset_apply(const char *name, enum config_tier tier, char **error)
 
 static const char *preset_value(const char *name, const char *member)
 {
-    const json_t *preset = preset_node(name);
+    const config_value *preset = preset_node(name);
     return preset ? preset_member_string(preset, member) : NULL;
 }
 
@@ -1398,15 +1523,15 @@ const char *config_preset_effort(const char *name)
     return preset_value(name, "effort");
 }
 
-static json_t *preset_nested_member(json_t *tier, const char *name)
+static config_value *preset_nested_member(config_value *tier, const char *name)
 {
-    json_t *presets = object_get_dotted(tier, "presets");
-    return json_is_object(presets) ? json_object_get(presets, name) : NULL;
+    config_value *presets = object_get_dotted(tier, "presets");
+    return config_value_is_object(presets) ? config_value_member(presets, name) : NULL;
 }
 
-static json_t *preset_member(json_t *tier, const char *name)
+static config_value *preset_member(config_value *tier, const char *name)
 {
-    json_t *preset = preset_nested_member(tier, name);
+    config_value *preset = preset_nested_member(tier, name);
     if (preset)
         return preset;
 
@@ -1419,7 +1544,7 @@ static json_t *preset_member(json_t *tier, const char *name)
 /* A nested state definition would outrank the nested config definition written by save. */
 static int state_defines_preset(const char *name)
 {
-    return json_is_object(preset_nested_member(store.state, name));
+    return config_value_is_object(preset_nested_member(store.state, name));
 }
 
 int config_preset_exists(const char *name)
@@ -1451,10 +1576,10 @@ int config_preset_save(const char *name, const struct config_preset *definition,
 {
     int result = -1;
     char *path = NULL;
-    json_t *updated = NULL;
-    json_t *preset = NULL;
+    config_value *updated = NULL;
+    config_value *preset = NULL;
     char *flat_key = NULL;
-    json_t *presets = NULL;
+    config_value *presets = NULL;
     /* Keep the user-facing identity fields first in the serialized object. */
     const struct {
         const char *key;
@@ -1486,13 +1611,13 @@ int config_preset_save(const char *name, const struct config_preset *definition,
         goto out;
     }
 
-    preset = json_object();
+    preset = config_value_object();
     if (!preset)
         goto out;
 
     for (size_t i = 0; i < sizeof(members) / sizeof(*members); i++) {
         if (members[i].value)
-            json_object_set_new(preset, members[i].key, json_string(members[i].value));
+            config_value_set(preset, members[i].key, config_value_string(members[i].value));
     }
     if (preset_validate(preset, name, error) != 0)
         goto out;
@@ -1509,28 +1634,29 @@ int config_preset_save(const char *name, const struct config_preset *definition,
         goto out;
     }
 
-    updated = store.file ? json_deep_copy(store.file) : json_object();
+    updated = store.file ? config_value_copy(store.file) : config_value_object();
     if (!updated)
         goto out;
 
     /* Remove the flat fallback so the file does not retain two definitions of the same preset. */
     flat_key = xasprintf("presets.%s", name);
-    json_object_del(updated, flat_key);
+    config_value_erase(updated, flat_key);
     free(flat_key);
     flat_key = NULL;
 
-    presets = json_object_get(updated, "presets");
-    if (presets && !json_is_object(presets)) {
+    presets = config_value_member(updated, "presets");
+    if (presets && !config_value_is_object(presets)) {
         if (error)
             *error = xasprintf("\"presets\" in %s is not a block of presets — fix it first", path);
         goto out;
     }
     if (!presets) {
-        presets = json_object();
-        if (!presets || json_object_set_new(updated, "presets", presets) != 0)
+        presets = config_value_object();
+        if (!presets || config_value_set(updated, "presets", presets) != 0)
             goto out;
+        presets = config_value_member(updated, "presets");
     }
-    if (json_object_set(presets, name, preset) != 0)
+    if (config_value_set_copy(presets, name, preset) != 0)
         goto out;
 
     if (write_json_atomic(path, updated) != 0) {
@@ -1540,7 +1666,7 @@ int config_preset_save(const char *name, const struct config_preset *definition,
     }
 
     scalar_cache_clear();
-    json_decref(store.file);
+    config_value_free(store.file);
     store.file = updated;
     updated = NULL;
     result = 0;
@@ -1549,8 +1675,8 @@ out:
     if (result != 0 && error && !*error)
         *error = xstrdup("couldn't save preset");
     free(path);
-    json_decref(updated);
-    json_decref(preset);
+    config_value_free(updated);
+    config_value_free(preset);
     return result;
 }
 
@@ -1561,7 +1687,7 @@ size_t config_preset_names(char ***out)
     size_t valid_count = 0;
 
     for (size_t i = 0; i < count; i++) {
-        const json_t *preset = preset_node(names[i]);
+        const config_value *preset = preset_node(names[i]);
         char *error = NULL;
         /* This runs on every prompt rebuild, so invalid definitions warn only once. */
         int quiet = store.preset_warnings_emitted || preset_defect_reported(names[i]);

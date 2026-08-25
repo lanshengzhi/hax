@@ -5,6 +5,7 @@
 #include <jansson.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 #include <strings.h>
 
 #include "config.h"
@@ -137,15 +138,45 @@ static const char *const EXTRA_BODY_RESERVED[] = {
     "n",     "system", "tools",    "stream_options", "instructions",
 };
 
+/* The configured-provider request path still consumes Jansson bodies until its own adapter slice;
+ * materialize the project-owned config value only at that protocol boundary. */
+static json_t *json_value_to_jansson(const hax::json::value &source)
+{
+    if (source.is_null())
+        return json_null();
+    if (source.is_boolean())
+        return source.boolean_value() ? json_true() : json_false();
+    if (source.is_integer())
+        return json_integer((json_int_t)source.integer_value());
+    if (source.is_real())
+        return json_real(source.real_value());
+    if (source.is_string())
+        return json_stringn(source.string_value().data(), source.string_value().size());
+    if (source.is_array()) {
+        json_t *result = json_array();
+        for (const hax::json::value &item : source.array_items())
+            json_array_append_new(result, json_value_to_jansson(item));
+        return result;
+    }
+
+    json_t *result = json_object();
+    for (const auto &member : source.object_items())
+        /* Jansson rejects embedded NULs in object keys; length-aware insertion avoids truncating
+         * the key and consumes the value when the key cannot be represented. */
+        json_object_setn_new(result, member.first.data(), member.first.size(),
+                             json_value_to_jansson(member.second));
+    return result;
+}
+
 json_t *provider_extra_body(const char *config_prefix)
 {
     if (!config_prefix)
         return NULL;
     char *key = xasprintf("%s.extra_body", config_prefix);
-    const json_t *node = config_json_node(key);
+    const hax::json::value *node = config_json_node(key);
     json_t *extra_body = NULL;
-    if (json_is_object(node)) {
-        extra_body = json_deep_copy(node);
+    if (node && node->is_object()) {
+        extra_body = json_value_to_jansson(*node);
         for (size_t i = 0; i < sizeof(EXTRA_BODY_RESERVED) / sizeof(*EXTRA_BODY_RESERVED); i++) {
             if (json_object_get(extra_body, EXTRA_BODY_RESERVED[i])) {
                 hax_warn("%s: '%s' is protocol-owned — ignoring it", key, EXTRA_BODY_RESERVED[i]);
@@ -207,28 +238,33 @@ char **provider_extra_headers(const char *config_prefix)
     if (!config_prefix)
         return NULL;
     char *key = xasprintf("%s.extra_headers", config_prefix);
-    const json_t *node = config_json_node(key);
-    if (node && !json_is_object(node))
+    const hax::json::value *node = config_json_node(key);
+    if (node && !node->is_object())
         hax_warn("%s must be a JSON object of name/value members — ignoring it", key);
-    if (!json_is_object(node)) {
+    if (!node || !node->is_object()) {
         free(key);
         return NULL;
     }
 
-    char **headers = (char **)xcalloc(json_object_size((json_t *)node) + 1, sizeof(*headers));
+    char **headers = (char **)xcalloc(node->size() + 1, sizeof(*headers));
     size_t n_headers = 0;
-    const char *name;
-    json_t *value;
-    json_object_foreach((json_t *)node, name, value)
-    {
-        const char *text = json_string_value(value);
-        const char *resolved = text ? resolve_env_escape(text) : NULL;
+    for (const auto &member : node->object_items()) {
+        if (node->find(member.first) != &member.second)
+            continue;
+        const char *name = member.first.c_str();
+        const hax::json::value &value = member.second;
+        const std::string *text_value = value.is_string() ? &value.string_value() : NULL;
+        const char *text = text_value ? text_value->c_str() : NULL;
+        const int text_has_nul = text_value && text_value->find('\0') != std::string::npos;
+        const char *resolved = text && !text_has_nul ? resolve_env_escape(text) : NULL;
         /* Validate the resolved value, not the written one: an environment variable holding
          * a newline must not smuggle in a second header. */
-        if (!header_name_valid(name))
+        if (member.first.find('\0') != std::string::npos || !header_name_valid(name))
             hax_warn("%s: invalid header name '%s' — ignoring it", key, name);
         else if (!text)
             hax_warn("%s: header '%s' needs a string value — ignoring it", key, name);
+        else if (text_has_nul)
+            hax_warn("%s: header '%s' cannot contain an embedded NUL — ignoring it", key, name);
         else if (!resolved)
             hax_warn("%s: header '%s' dropped — %s is not set", key, name, text + 1);
         else if (!*resolved)
@@ -266,9 +302,9 @@ static const char *cfg(const char *name, const char *leaf);
 static int provider_routes_wires(const char *name)
 {
     char *key = xasprintf("providers.%s.model_apis", name);
-    const json_t *rules = config_json_node(key);
+    const hax::json::value *rules = config_json_node(key);
     free(key);
-    if (json_is_object(rules) && json_object_size((json_t *)rules) > 0)
+    if (rules && rules->is_object() && !rules->object_items().empty())
         return 1;
     const char *api = cfg(name, "api");
     if (!api)

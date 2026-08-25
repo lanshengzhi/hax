@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include <errno.h>
-#include <jansson.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +11,7 @@
 #include "config.h"
 #include "effort.h"
 #include "harness.h"
+#include "json.h"
 
 /* Point the cache tier at a private temp tree and write `json` as the cached snapshot. */
 static void write_cache_fixture(const char *json)
@@ -78,6 +79,7 @@ static const char CACHE_FIXTURE[] =
     "                    \"reasoning_options\": [{\"type\": \"toggle\"},"
     "                                            {\"type\": \"effort\","
     "                                             \"values\": [\"low\", \"max\"]}]},"
+    "    \"o3-empty-reasoning\": {\"reasoning\": true, \"reasoning_options\": []},"
     "    \"o3-no-reasoning\": {\"reasoning\": false, \"cost\": {\"input\": 1, \"output\": 2}}"
     "  }},"
     "  \"openrouter\": {\"models\": {"
@@ -107,6 +109,11 @@ static void test_lookup_reasoning_options(void)
     EXPECT(catalog_lookup("openai", "o3-toggle-then-effort", &entry) == 0);
     EXPECT(entry.efforts.known && entry.efforts.count == 2);
     EXPECT(effort_set_has(&entry.efforts, "max"));
+
+    /* An explicit empty array is also a known-empty ladder, so it overrides a lower-priority
+     * static effort list. */
+    EXPECT(catalog_lookup("openai", "o3-empty-reasoning", &entry) == 0);
+    EXPECT(entry.efforts.known && entry.efforts.count == 0);
 
     /* Declaring no reasoning at all lands in the same place. */
     EXPECT(catalog_lookup("openai", "o3-no-reasoning", &entry) == 0);
@@ -186,7 +193,7 @@ static void test_lookup_many(void)
 static void test_config_overrides_and_merges(void)
 {
     /* The config catalog.models block wins field-by-field; the cache fills
-     * what it leaves unset. Numbers arrive normalized to strings (config.c),
+     * what it leaves unset. Numbers remain typed through the configuration adapter,
      * and token counts accept the parse_size grammar. */
     EXPECT(config_load("{\"catalog\": {\"models\": {\"openai\": {"
                        "  \"gpt-x.5\": {\"cost\": {\"input\": 1.25, \"output\": 10},"
@@ -408,8 +415,8 @@ static void test_lookup_parses_tiers(void)
     EXPECT(catalog_price(&entry, 300000, 100000, 0, 0, 0, NULL) == 1.2 + 1.6);
 
     /* A tiers list pasted verbatim into catalog.models wins whole over
-     * the cached one (no per-tier merging) — config arrays pass through
-     * normalize() untouched, raw numbers and all. */
+     * the cached one (no per-tier merging) — config arrays retain their
+     * typed numeric values. */
     EXPECT(config_load("{\"catalog\": {\"models\": {\"openai\": {"
                        "  \"o3-tiered\": {\"cost\": {\"tiers\": ["
                        "    {\"input\": 5, \"output\": 20,"
@@ -475,6 +482,48 @@ static void test_tier_only_entry(void)
     config_load(NULL);
 }
 
+static void test_integer_safe_catalog_values(void)
+{
+    /* Dynamic JSON integers materialize at the catalog boundary without narrowing through int or
+     * double, while unknown extension members remain harmless. */
+    EXPECT(config_load("{\"catalog\": {\"models\": {\"integer-safe\": {"
+                       "  \"large\": {\"future\": true,"
+                       "    \"cost\": {\"input\": 1, \"output\": 2, \"tiers\": ["
+                       "      {\"input\": 3, \"output\": 4,"
+                       "       \"tier\": {\"type\": \"context\", \"size\": 4294967296}}]},"
+                       "    \"limit\": {\"context\": 4294967296, \"output\": 2147483648}}"
+                       "}}}}") == 0);
+
+    struct catalog_entry entry;
+    EXPECT(catalog_lookup("integer-safe", "large", &entry) == 0);
+    EXPECT(entry.context_window == 4294967296L);
+    EXPECT(entry.max_output == 2147483648L);
+    EXPECT(entry.n_tiers == 1);
+    EXPECT(entry.tiers[0].context_threshold == 4294967296L);
+
+    /* A numeric value beyond the signed module range is rejected as an unknown token limit rather
+     * than wrapping into a negative long. String-sized values keep the existing size grammar. */
+    EXPECT(config_load("{\"catalog\": {\"models\": {\"overflow\": {"
+                       "  \"limit\": {\"context\": \"9223372036854775808\"}}}}}") == 0);
+    EXPECT(catalog_lookup("integer-safe", "overflow", &entry) == -1);
+    EXPECT(entry.context_window == 0);
+    config_load(NULL);
+
+    /* Numeric rates beyond the signed range are rejected rather than rounded through double. */
+    write_cache_fixture("{\"overflow-rate\": {\"models\": {\"bad\": {"
+                        "\"cost\": {\"input\": 9223372036854775808, \"output\": 2}},"
+                        "\"nul\": {\"cost\": {\"input\": \"1\\u00005\", \"output\": 2},"
+                        "             \"limit\": {\"context\": \"256k\\u0000junk\"}}}}}");
+    catalog_shutdown();
+    EXPECT(catalog_lookup("overflow-rate", "bad", &entry) == 0);
+    EXPECT(entry.cost_input == -1);
+    EXPECT(entry.cost_output == 2);
+    EXPECT(catalog_lookup("overflow-rate", "nul", &entry) == 0);
+    EXPECT(entry.cost_input == -1);
+    EXPECT(entry.cost_output == 2);
+    EXPECT(entry.context_window == 0);
+}
+
 static void test_extract_member(void)
 {
     /* Keys match exactly (no prefix hits), later members are reachable
@@ -485,35 +534,46 @@ static void test_extract_member(void)
                        "  \"tricky\": {\"s\": \"esc \\\" } ] {\", \"a\": [1, {\"b\": []}]},\n"
                        "  \"openai\": {\"models\": {\"m\": {\"cost\": {\"input\": 2}}}, \"n\": 1}\n"
                        "}";
-    json_t *value = catalog_extract_member(text, "openai");
-    EXPECT(value != NULL);
+    auto value = catalog_extract_member(text, "openai");
+    EXPECT(value.has_value());
     if (value) {
-        EXPECT(json_is_object(json_object_get(value, "models")));
-        json_decref(value);
+        auto decoded = hax::json::parse_value(*value);
+        EXPECT(decoded && decoded->is_object());
+        EXPECT(decoded && decoded->find("models") && decoded->find("models")->is_object());
     }
     value = catalog_extract_member(text, "tricky");
-    EXPECT(value != NULL);
+    EXPECT(value.has_value());
     if (value) {
-        EXPECT_STR_EQ(json_string_value(json_object_get(value, "s")), "esc \" } ] {");
-        json_decref(value);
+        auto decoded = hax::json::parse_value(*value);
+        EXPECT(decoded && decoded->find("s") && decoded->find("s")->is_string());
+        if (decoded && decoded->find("s"))
+            EXPECT_STR_EQ(decoded->find("s")->string_value().c_str(), "esc \" } ] {");
     }
-    /* Scalar member values come back too (JSON_DECODE_ANY). */
+    /* Scalar member values come back too, without a Jansson ownership boundary. */
     value = catalog_extract_member("{\"n\": 42}", "n");
-    EXPECT(value != NULL && json_is_integer(value) && json_integer_value(value) == 42);
-    json_decref(value);
+    EXPECT(value && *value == "42");
+    value = catalog_extract_member("{\"n\": 1, \"n\": 2}", "n");
+    EXPECT(value && *value == "2");
 
-    /* Misses: absent key, prefix-of-a-key, wrong roots, truncation. */
-    EXPECT(catalog_extract_member(text, "ope") == NULL);
-    EXPECT(catalog_extract_member(text, "openai2") == NULL);
-    EXPECT(catalog_extract_member(text, "models") == NULL); /* nested, not top-level */
-    EXPECT(catalog_extract_member("[1, 2]", "k") == NULL);
-    EXPECT(catalog_extract_member("null", "k") == NULL);
-    EXPECT(catalog_extract_member("{}", "k") == NULL);
-    EXPECT(catalog_extract_member("{", "k") == NULL);
-    EXPECT(catalog_extract_member("{\"k\": {\"a\": 1}", "k") == NULL); /* unterminated root */
-    EXPECT(catalog_extract_member("{\"k\": \"unterminated", "k") == NULL);
-    EXPECT(catalog_extract_member(NULL, "k") == NULL);
-    EXPECT(catalog_extract_member("{}", NULL) == NULL);
+    value = catalog_extract_member("{\"open\\u0061i\": {\"models\": {}}}", "openai");
+    EXPECT(value.has_value());
+
+    /* Misses: absent key, prefix-of-a-key, wrong roots, truncation, and malformed later members. */
+    EXPECT(!catalog_extract_member(text, "ope"));
+    EXPECT(!catalog_extract_member(text, "openai2"));
+    EXPECT(!catalog_extract_member(text, "models")); /* nested, not top-level */
+    EXPECT(!catalog_extract_member("[1, 2]", "k"));
+    EXPECT(!catalog_extract_member("null", "k"));
+    EXPECT(!catalog_extract_member("{}", "k"));
+    EXPECT(!catalog_extract_member("{", "k"));
+    EXPECT(!catalog_extract_member("{\"k\": {\"a\": 1}", "k")); /* unterminated root */
+    EXPECT(!catalog_extract_member("{\"k\": \"unterminated", "k"));
+    EXPECT(!catalog_extract_member("{\"k\": wat}", "k"));
+    EXPECT(!catalog_extract_member("{\"openai\": {}, \"tail\": wat}", "openai"));
+    EXPECT(!catalog_extract_member("{\"openai\": {}} garbage", "openai"));
+    EXPECT(!catalog_extract_member("{\"bad\\q\": 1}", "bad"));
+    EXPECT(!catalog_extract_member(NULL, "k"));
+    EXPECT(!catalog_extract_member("{}", NULL));
 }
 
 static void test_prefetch_disabled_is_noop(void)
@@ -554,7 +614,7 @@ static void test_wire_api_hints(void)
 
 /* The `interleaved` hint names the member an assistant turn's reasoning replays under. Only
  * the plain-string members are usable; `reasoning_details` is an array shape hax cannot fill
- * with text, so it must read as "no replay" rather than as a field name. */
+ * with text, so it is an explicit "no replay" declaration rather than a field name. */
 static void test_interleaved_hints(void)
 {
     write_cache_fixture("{\"zen-think\": {\"npm\": \"@ai-sdk/openai-compatible\", \"models\": {"
@@ -575,7 +635,7 @@ static void test_interleaved_hints(void)
     EXPECT_STR_EQ(entry.interleaved_field, "reasoning_content");
 
     catalog_lookup("zen-think", "details", &entry);
-    EXPECT(entry.interleaved_field == NULL);
+    EXPECT(entry.interleaved_field == NULL && entry.interleaved_declared);
     catalog_lookup("zen-think", "toggle", &entry);
     EXPECT(entry.interleaved_field == NULL);
     catalog_lookup("zen-think", "off", &entry);
@@ -588,12 +648,15 @@ static void test_interleaved_hints(void)
      * merging back underneath. */
     EXPECT(config_load("{\"catalog\": {\"models\": {\"zen-think\": {"
                        "  \"quiet\": {\"interleaved\": {\"field\": \"reasoning_content\"}},"
+                       "  \"bare\": {\"interleaved\": \"reasoning_details\"},"
                        "  \"content\": {\"interleaved\": false}}}}}") == 0);
     catalog_shutdown();
     EXPECT(catalog_lookup("zen-think", "quiet", &entry) == 0);
     EXPECT_STR_EQ(entry.interleaved_field, "reasoning_content");
+    EXPECT(catalog_lookup("zen-think", "bare", &entry) == 0);
+    EXPECT(entry.interleaved_field == NULL && entry.interleaved_declared);
     EXPECT(catalog_lookup("zen-think", "content", &entry) == 0);
-    EXPECT(entry.interleaved_field == NULL);
+    EXPECT(entry.interleaved_field == NULL && entry.interleaved_declared);
     EXPECT(config_load(NULL) == 0);
     catalog_shutdown();
 
@@ -653,7 +716,7 @@ static void test_memoization_and_shutdown_clear(void)
     EXPECT(entry.cost_input == 5); /* fresh parse sees the new snapshot */
 }
 
-int main(void)
+int main(void) // NOLINT(bugprone-exception-escape)
 {
     write_cache_fixture(CACHE_FIXTURE);
 
@@ -670,6 +733,7 @@ int main(void)
     test_price_tiers();
     test_lookup_parses_tiers();
     test_tier_only_entry();
+    test_integer_safe_catalog_values();
     test_extract_member();
     test_prefetch_disabled_is_noop();
     test_wire_api_hints();

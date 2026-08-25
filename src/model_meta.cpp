@@ -286,6 +286,36 @@ static void load_catalog_entry(const struct provider *provider, const char *mode
         catalog_lookup(provider->catalog_id, model, out);
 }
 
+const char *model_meta_api(const struct provider *provider, const char *model)
+{
+    if (!provider || !provider->catalog_id || !*provider->catalog_id || !model || !*model)
+        return NULL;
+
+    struct catalog_entry catalog;
+    load_catalog_entry(provider, model, &catalog);
+    if (!catalog.api) {
+        /* A fresh install may still be fetching the snapshot. Keep the bounded wait at the
+         * metadata seam so provider request code never reaches into the catalog directly. */
+        catalog_wait(MODEL_META_PROBE_WAIT_MS);
+        load_catalog_entry(provider, model, &catalog);
+    }
+    return catalog.api;
+}
+
+int model_meta_interleaved(const struct provider *provider, const char *model, const char **field)
+{
+    if (field)
+        *field = NULL;
+    if (!provider || !provider->catalog_id || !*provider->catalog_id || !model || !*model)
+        return 0;
+
+    struct catalog_entry catalog;
+    load_catalog_entry(provider, model, &catalog);
+    if (field)
+        *field = catalog.interleaved_field;
+    return catalog.interleaved_declared;
+}
+
 static int report_has_base_rates(const struct model_info *report)
 {
     return report && (report->cost_input >= 0 || report->cost_output >= 0);

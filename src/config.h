@@ -2,8 +2,9 @@
 #ifndef HAX_CONFIG_H
 #define HAX_CONFIG_H
 
-#include <jansson.h>
 #include <stddef.h>
+
+#include "json_value.h"
 
 /* Process-wide configuration, owned by the foreground thread. Settings resolve in this order:
  *
@@ -42,9 +43,9 @@ const char *config_str_below_run(const char *key);
 /* Return the registry default, or NULL for an unknown or dynamically defaulted setting. */
 const char *config_default(const char *key);
 
-/* Return a structured block from the state tier, then the config-file tier, verbatim with its
- * original JSON types. The first tier that defines the block wins; blocks are not merged. */
-const json_t *config_json_node(const char *key);
+/* Return a borrowed structured value from the state tier, then the config-file tier, preserving
+ * its original JSON types. The first tier that defines the value wins; blocks are not merged. */
+const hax::json::value *config_json_node(const char *key);
 
 /* Merge the immediate member names at `key` across the config-file and state tiers. `out` receives
  * an allocated array of allocated strings, or NULL when empty; the caller frees each string and

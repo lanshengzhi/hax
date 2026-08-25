@@ -89,6 +89,7 @@ sources = files(
     'src/banner.cpp',
     'src/busy.cpp',
     'src/catalog.cpp',
+    'src/catalog_json.cpp',
     'src/cli.cpp',
     'src/compact.cpp',
     'src/config.cpp',

@@ -3,11 +3,11 @@
 
 #include <fnmatch.h>
 #include <jansson.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
-#include "catalog.h"
 #include "config.h"
 #include "model_meta.h"
 #include "provider.h"
@@ -98,10 +98,13 @@ int http_provider_max_tokens(struct provider *base, const char *model)
     }
 
     long model_limit = model_meta_max_output(base, model);
-    if (user_set && configured > 0)
-        return model_limit > 0 && configured > model_limit ? (int)model_limit : configured;
+    if (user_set && configured > 0) {
+        if (model_limit > 0 && (long)configured > model_limit)
+            return model_limit > INT_MAX ? INT_MAX : (int)model_limit;
+        return configured;
+    }
     if (model_limit > 0)
-        return (int)model_limit;
+        return model_limit > INT_MAX ? INT_MAX : (int)model_limit;
     return configured > 0 ? configured : MESSAGES_DEFAULT_MAX_TOKENS;
 }
 
@@ -196,9 +199,6 @@ static const struct stream_usage *stream_parser_usage(void *ctx)
     return stream->wire->events_usage(&stream->events);
 }
 
-/* How long a request may wait on the in-flight snapshot fetch for its wire hint. */
-#define WIRE_HINT_FETCH_WAIT_MS 5000
-
 /* The wire `model` speaks: the first matching model_apis rule, else the catalog hint when the
  * preset opted in, else the provider default. NULL means the catalog knows the model needs a
  * protocol hax does not implement; the caller reports it instead of guessing. */
@@ -209,17 +209,9 @@ static const struct wire *resolve_model_wire(struct http_provider *provider, con
             return provider->wire_rules[i].wire;
 
     if (provider->catalog_wires && provider->catalog_id) {
-        struct catalog_entry entry;
-        catalog_lookup(provider->catalog_id, model, &entry);
-        if (!entry.api) {
-            /* A fresh install may still be fetching the snapshot, and guessing here would
-             * speak the wrong protocol to the model: wait, bounded, and look again. A fetch
-             * outliving the wait keeps running so later requests can route by it. */
-            catalog_wait(WIRE_HINT_FETCH_WAIT_MS);
-            catalog_lookup(provider->catalog_id, model, &entry);
-        }
-        if (entry.api)
-            return wire_find(entry.api);
+        const char *api = model_meta_api(&provider->base, model);
+        if (api)
+            return wire_find(api);
     }
     return provider->wire;
 }
@@ -233,9 +225,10 @@ static const char *resolve_model_reasoning_field(const struct http_provider *pro
     if (provider->reasoning_field_pinned || !provider->catalog_id)
         return provider->reasoning_field;
 
-    struct catalog_entry entry;
-    catalog_lookup(provider->catalog_id, model, &entry);
-    return entry.interleaved_field ? entry.interleaved_field : provider->reasoning_field;
+    const char *catalog_field = NULL;
+    if (model_meta_interleaved(&provider->base, model, &catalog_field))
+        return catalog_field;
+    return provider->reasoning_field;
 }
 
 static int http_provider_stream(struct provider *base, const struct context *context,
@@ -393,49 +386,47 @@ static int http_provider_list_models(struct provider *base, struct model_info **
                                      void *tick_user)
 {
     struct http_provider *provider = (struct http_provider *)base;
-    *models = NULL;
-    *n_models = 0;
-
     char *url = xasprintf("%s/models", provider->base_url);
     char **headers = build_headers(provider, provider->wire, 0);
-
     char *response_body = NULL;
+    json_t *root = NULL;
+    struct model_info *available = NULL;
+    json_t *data = NULL;
+    size_t n_available = 0;
+    size_t n_entries = 0;
+    const char *provider_name = base->name ? base->name : "provider";
     long status = 0;
-    int result = http_get(url, (const char *const *)headers, MODEL_LIST_TIMEOUT_S, 0, tick,
-                          tick_user, &response_body, &status);
-    string_array_free(headers);
-    free(url);
+    int result = -1;
 
+    *models = NULL;
+    *n_models = 0;
+    result = http_get(url, (const char *const *)headers, MODEL_LIST_TIMEOUT_S, 0, tick, tick_user,
+                      &response_body, &status);
     if (result != 0) {
         *error = format_model_list_error(base->name, provider->base_url, provider->api_key != NULL,
                                          status);
-        free(response_body);
-        return -1;
+        goto out;
     }
 
-    json_t *root = json_loads(response_body, 0, NULL);
-    free(response_body);
-    const char *provider_name = base->name ? base->name : "provider";
+    root = json_loads(response_body, 0, NULL);
     if (!root) {
         *error = xasprintf("%s /models response is not valid JSON", provider_name);
-        return -1;
+        goto out;
     }
 
-    json_t *data = json_object_get(root, "data");
+    data = json_object_get(root, "data");
     /* Ollama reports data:null when the server is reachable but has no models. */
     if (json_is_null(data) || (json_is_array(data) && json_array_size(data) == 0)) {
-        json_decref(root);
-        return 0;
+        result = 0;
+        goto out;
     }
     if (!json_is_array(data)) {
-        json_decref(root);
         *error = xasprintf("%s /models response has no model list", provider_name);
-        return -1;
+        goto out;
     }
 
-    size_t n_entries = json_array_size(data);
-    struct model_info *available = (struct model_info *)xmalloc(n_entries * sizeof(*available));
-    size_t n_available = 0;
+    n_entries = json_array_size(data);
+    available = (struct model_info *)xmalloc(n_entries * sizeof(*available));
     for (size_t i = 0; i < n_entries; i++) {
         json_t *entry = json_array_get(data, i);
         const char *model_id = json_string_value(json_object_get(entry, "id"));
@@ -448,17 +439,24 @@ static int http_provider_list_models(struct provider *base, struct model_info **
             provider->parse_model(entry, &available[n_available]);
         n_available++;
     }
-    json_decref(root);
 
     if (n_available == 0) {
-        free(available);
         *error = xasprintf("%s /models response contains no usable model ids", provider_name);
-        return -1;
+        goto out;
     }
 
     *models = available;
     *n_models = n_available;
-    return 0;
+    available = NULL;
+    result = 0;
+
+out:
+    model_info_free(available, n_available);
+    json_decref(root);
+    free(response_body);
+    string_array_free(headers);
+    free(url);
+    return result;
 }
 
 static size_t http_provider_list_efforts(struct provider *base, const char *const **efforts)
@@ -543,17 +541,18 @@ static void resolve_wire_rules(struct http_provider *provider, const char *prefi
     if (!prefix)
         return;
     char *key = xasprintf("%s.model_apis", prefix);
-    const json_t *node = config_json_node(key);
-    if (node && !json_is_object(node))
+    const hax::json::value *node = config_json_node(key);
+    if (node && !node->is_object())
         hax_warn("%s must be a JSON object of pattern/dialect members — ignoring it", key);
-    if (json_is_object(node)) {
-        provider->wire_rules =
-            (wire_rule *)xcalloc(json_object_size((json_t *)node), sizeof(*provider->wire_rules));
-        const char *pattern;
-        json_t *value;
-        json_object_foreach((json_t *)node, pattern, value)
-        {
-            const struct wire *wire = wire_find(json_string_value(value));
+    if (node && node->is_object()) {
+        provider->wire_rules = (wire_rule *)xcalloc(node->size(), sizeof(*provider->wire_rules));
+        for (const auto &member : node->object_items()) {
+            if (node->find(member.first) != &member.second)
+                continue;
+            const char *pattern = member.first.c_str();
+            const hax::json::value &value = member.second;
+            const char *dialect = value.is_string() ? value.string_value().c_str() : NULL;
+            const struct wire *wire = wire_find(dialect);
             if (!wire) {
                 hax_warn("%s: '%s' needs a dialect value (openai-completions, openai-responses, "
                          "anthropic-messages) — ignoring it",

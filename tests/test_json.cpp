@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -36,6 +37,62 @@ static void test_valid_parse_and_serialize(void)
     EXPECT(encoded.has_value());
     if (encoded)
         EXPECT(*encoded == R"({"name":"Ada","count":3})");
+}
+
+static void test_dynamic_value_preserves_integers_and_order(void)
+{
+    const std::string input =
+        R"({"first":9223372036854775807,"middle":{"large":4294967296},"last":[-9007199254740993]})";
+    const auto parsed = hax::json::parse_value(input);
+    EXPECT(parsed.has_value());
+    if (!parsed)
+        return;
+
+    const hax::json::value *first = parsed->find("first");
+    const hax::json::value *middle = parsed->find("middle");
+    const hax::json::value *large = middle ? middle->find("large") : nullptr;
+    const hax::json::value *last = parsed->find("last");
+    const hax::json::value *negative = last && last->is_array() && !last->array_items().empty()
+                                           ? &last->array_items()[0]
+                                           : nullptr;
+    EXPECT(first && first->is_integer() && first->integer_value() == INT64_MAX);
+    EXPECT(large && large->is_integer() && large->integer_value() == 4294967296);
+    EXPECT(negative && negative->is_integer() && negative->integer_value() == -9007199254740993LL);
+
+    const auto encoded = hax::json::serialize_value(*parsed);
+    EXPECT(encoded.has_value());
+    if (encoded)
+        EXPECT(*encoded == input);
+
+    const auto real = hax::json::parse_value("1e3");
+    EXPECT(real.has_value() && real->is_real());
+    if (real) {
+        const auto real_encoded = hax::json::serialize_value(*real);
+        EXPECT(real_encoded.has_value());
+        if (real_encoded)
+            EXPECT(*real_encoded == "1000.0");
+    }
+
+    hax::json::value duplicate = hax::json::object{{"key", 1}, {"key", 2}};
+    const hax::json::value *duplicate_last = duplicate.find("key");
+    EXPECT(duplicate_last && duplicate_last->is_integer() && duplicate_last->integer_value() == 2);
+
+    std::string control_text = "a";
+    control_text.push_back(static_cast<char>(1));
+    control_text += "b";
+    hax::json::value controls = hax::json::object{{"text", hax::json::value(control_text)}};
+    const auto escaped = hax::json::serialize_value(controls);
+    EXPECT(escaped.has_value());
+    if (escaped)
+        EXPECT(escaped->find("\\u0001") != std::string::npos);
+}
+
+static void test_dynamic_integer_overflow_is_rejected(void)
+{
+    EXPECT(!hax::json::parse_value("9223372036854775808"));
+    EXPECT(!hax::json::parse_value("-9223372036854775809"));
+    EXPECT(hax::json::parse_value("9223372036854775808.0"));
+    EXPECT(hax::json::parse_value(R"("9223372036854775808")"));
 }
 
 static void test_syntax_error_has_source_context(void)
@@ -143,9 +200,11 @@ static void test_non_null_terminated_scalar_view_is_bounded(void)
         EXPECT(*parsed == 1);
 }
 
-int main(void)
+int main(void) // NOLINT(bugprone-exception-escape)
 {
     test_valid_parse_and_serialize();
+    test_dynamic_value_preserves_integers_and_order();
+    test_dynamic_integer_overflow_is_rejected();
     test_syntax_error_has_source_context();
     test_type_error_is_project_error();
     test_unknown_keys_are_explicitly_permissive();
